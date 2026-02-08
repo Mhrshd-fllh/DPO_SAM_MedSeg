@@ -1,0 +1,15 @@
+# PMC-CLIP constraint (important)
+transformers==4.21.0  # :contentReference[oaicite:13]{index=13}
+sentencepiece
+accelerate
+bitsandbytes
+peft
+einops
+ftfy
+regex
+tqdm
+
+# install these repos in editable mode (recommended for reproducibility)
+# git+https://github.com/WeixiongLin/PMC-CLIP.git
+# git+https://github.com/chaoyi-wu/PMC-LLaMA.git
+# git+https://github.com/xiaoman-zhang/PMC-VQA.git

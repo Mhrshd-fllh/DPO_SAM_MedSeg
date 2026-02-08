@@ -1,0 +1,11 @@
+# If you clone SAM-Med2D and install editable, you may not need to list every subdep here.
+# But keeping common deps explicit helps reproducibility.
+
+einops
+pycocotools
+albumentations
+timm
+torchmetrics
+
+# optional (mixed precision / some repos mention it)
+# apex  (install separately if needed)
