@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 import torch
 
+
+@dataclass(frozen=True)
+class VisualPromptArtifacts:
+    tensors: Dict[str, Any]
 
 @dataclass(frozen=True)
 class VisualPrompts:
@@ -13,9 +17,11 @@ class VisualPrompts:
       - points_xy:  [B, K, 2] float (x,y)
       - points_labels: [B, K] int64 (1 pos, 0 neg)
     """
+
     boxes_xyxy: torch.Tensor
     points_xy: torch.Tensor
     points_labels: torch.Tensor
+    artifacts: Optional["VisualPromptArtifacts"] = None
 
 
 @dataclass(frozen=True)
