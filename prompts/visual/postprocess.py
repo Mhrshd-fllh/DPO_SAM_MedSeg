@@ -5,18 +5,13 @@ import cv2
 
 
 def keep_largest_components(mask: np.ndarray, max_components: int = 1) -> np.ndarray:
-    """
-    mask: HxW {0,1} uint8 or bool
-    returns: HxW {0,1} uint8 keeping up to max_components largest CCs
-    """
     m = (mask > 0).astype(np.uint8)
     num, labels, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
     if num <= 1:
         return m
 
-    # stats: [num, 5] (x, y, w, h, area). index 0 is background
     areas = stats[1:, cv2.CC_STAT_AREA]
-    order = np.argsort(-areas)  # descending
+    order = np.argsort(-areas)
     keep_ids = order[:max_components] + 1
 
     out = np.zeros_like(m, dtype=np.uint8)
@@ -26,10 +21,6 @@ def keep_largest_components(mask: np.ndarray, max_components: int = 1) -> np.nda
 
 
 def mask_to_box_xyxy(mask: np.ndarray) -> np.ndarray:
-    """
-    mask: HxW {0,1}
-    returns: [4] float32 (x1,y1,x2,y2) in pixel coords
-    """
     ys, xs = np.where(mask > 0)
     if len(xs) == 0:
         return np.array([0, 0, 1, 1], dtype=np.float32)
@@ -39,14 +30,6 @@ def mask_to_box_xyxy(mask: np.ndarray) -> np.ndarray:
 
 
 def sample_points_from_mask(mask: np.ndarray, k: int, rng: np.random.Generator) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Randomly sample k points from foreground pixels.
-    paper says randomly sample points from area of closed component. :contentReference[oaicite:1]{index=1}
-
-    Returns:
-      points_xy: [k,2] float32 (x,y)
-      labels:    [k]   int64 (1 positive)
-    """
     ys, xs = np.where(mask > 0)
     if len(xs) == 0:
         pts = np.zeros((k, 2), dtype=np.float32)
@@ -60,7 +43,6 @@ def sample_points_from_mask(mask: np.ndarray, k: int, rng: np.random.Generator) 
 
 
 def batch_mask_to_boxes(masks: np.ndarray) -> np.ndarray:
-    # masks: [B,H,W]
     boxes = []
     for i in range(masks.shape[0]):
         boxes.append(mask_to_box_xyxy(masks[i]))
