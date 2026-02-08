@@ -1,0 +1,14 @@
+# BiomedCLIP via OpenCLIP/HF
+open-clip-torch
+transformers
+huggingface_hub
+timm
+ftfy
+regex
+
+# gScoreCAM official repo
+git+https://github.com/anguyen8/gScoreCAM.git  # :contentReference[oaicite:4]{index=4}
+
+# DenseCRF
+cython
+pydensecrf  # :contentReference[oaicite:5]{index=5}

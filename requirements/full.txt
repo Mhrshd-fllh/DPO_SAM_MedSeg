@@ -1,0 +1,4 @@
+-r base.txt
+-r visual_prompts.txt
+-r sam_med2d.txt
+# -r vqa_medvint.txt  
