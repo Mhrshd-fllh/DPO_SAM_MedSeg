@@ -8,5 +8,9 @@ visual:
 text:
   question_template: "Question: {}, Answer is:"
   question: "What is the shape of breast tumor and where is it located?"
-  gpt_enabled: false  # default stub (set true when you add API)
-  vqa_enabled: false  # default stub (set true when you add real VQA checkpoints)
+  vqa_enabled: true
+  gpt_enabled: false
+
+  vqa_model_id: "Salesforce/blip-vqa-base"
+  gpt_model: "gpt-4o-mini"
+
