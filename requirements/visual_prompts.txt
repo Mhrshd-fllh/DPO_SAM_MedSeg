@@ -14,5 +14,5 @@ cython
 pydensecrf  # :contentReference[oaicite:5]{index=5}
 
 open-clip-torch
-pytorch-grad-cam
+grad-cam
 
