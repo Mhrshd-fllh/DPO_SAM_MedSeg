@@ -1,16 +1,27 @@
-visual:
-  num_points: 8
-  max_components: 1  # BUSI default. (lung-like can be 2)
-  # thresholds / params later when DenseCRF is implemented
-  crf:
-    enabled: true
+prompts:
+  visual:
+    class_text: "breast tumor"
 
-text:
-  question_template: "Question: {}, Answer is:"
-  question: "What is the shape of breast tumor and where is it located?"
-  vqa_enabled: true
-  gpt_enabled: false
+    num_points: 8
+    max_components: 1
+    points_seed: 42
+    saliency_threshold: 0.3
 
-  vqa_model_id: "Salesforce/blip-vqa-base"
-  gpt_model: "gpt-4o-mini"
+    crf:
+      enabled: false   # روی Colab معمولاً خاموش بهتره
+      iters: 5
+
+    cam:
+      target_layer: "visual.trunk.blocks.11"
+      use_vit_reshape: true
+
+
+  text:
+    question_template: "Question: {}, Answer is:"
+    question: "What is the shape of breast tumor and where is it located?"
+    vqa_enabled: true
+    gpt_enabled: false
+
+    vqa_model_id: "Salesforce/blip-vqa-base"
+    gpt_model: "gpt-4o-mini"
 

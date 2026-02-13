@@ -4,10 +4,16 @@ sam:
 
 train:
   out_dir: "runs/stage1"
-  epochs: 15
+  epochs: 5
   batch_size: 4
   num_workers: 2
-  labeled_frac: 0.1
+
+  # ✅ انتخاب prompt source
+  # cam = paper-faithful (نیازمند درست شدن CAM)
+  # gt  = runnable baseline (فعلاً)
+  prompt_source: "gt"
+
+  freeze_image_encoder: true
 
   lr: 1.0e-4
   weight_decay: 1.0e-4
