@@ -72,25 +72,28 @@ class _CLIPTextLogitsWrapper(nn.Module):
 
 
 def _vit_reshape_transform(x: torch.Tensor) -> torch.Tensor:
-    """
-    For ViT, CAM needs [B,C,H,W]. Many ViT blocks output [B, tokens, C].
-    We'll drop cls token and reshape tokens into square map.
-    """
-    # x: [B, tokens, C]
+    # sometimes blocks return tuple(output, attn) etc.
+    if isinstance(x, (tuple, list)):
+        x = x[0]
+
     if x.dim() != 3:
         return x
+
     B, T, C = x.shape
-    # assume first token is CLS
     if T <= 1:
         return x.transpose(1, 2).unsqueeze(-1)
+
+    # drop CLS token
     t = T - 1
     s = int(np.sqrt(t))
     if s * s != t:
-        # fallback: treat as 1D map
+        # fallback
         return x[:, 1:, :].transpose(1, 2).unsqueeze(-1)
-    x = x[:, 1:, :]                 # [B, t, C]
-    x = x.reshape(B, s, s, C).permute(0, 3, 1, 2).contiguous()  # [B,C,s,s]
+
+    x = x[:, 1:, :]  # [B,t,C]
+    x = x.reshape(B, s, s, C).permute(0, 3, 1, 2).contiguous()
     return x
+
 
 
 class GScoreCAMSaliency:
@@ -151,6 +154,9 @@ class GScoreCAMSaliency:
 
             # CAM compute
             with ctx:
+
+                target_layer = _resolve_layer(wrapped, "clip." + self.target_layer_path)
+
                 cam = ScoreCAM(
                     model=wrapped,
                     target_layers=[target_layer],
@@ -171,6 +177,7 @@ class GScoreCAMSaliency:
             # Normalize [0,1] robustly
             mn, mx = cam_map.min(), cam_map.max()
             cam_map = (cam_map - mn) / (mx - mn + 1e-6)
+
 
             saliency_all.append(cam_map)
 
