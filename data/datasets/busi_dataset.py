@@ -1,98 +1,67 @@
 from __future__ import annotations
-
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
 import os
-from typing import Optional, Dict, Any, List
-import cv2
+from glob import glob
+
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+from PIL import Image
 
-from core.types import Batch
 
-IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
+@dataclass(frozen=True)
+class Sample:
+    image: torch.Tensor      # [3,H,W] float32 in [0,1]
+    mask: torch.Tensor       # [1,H,W] float32 in {0,1}
+    meta: Dict
 
-def _list_images(folder: str) -> List[str]:
-    files = [f for f in os.listdir(folder) if f.lower().endswith(IMG_EXTS)]
-    files.sort()
-    return files
 
 class BUSIDataset(Dataset):
-    def __init__(
-        self,
-        root: str,
-        split: str = "train",
-        image_dir: str = "images",
-        mask_dir: str = "masks",
-        transform=None,
-        mask_foreground_threshold: int = 1,
-        dataset_name: str = "busi",
-    ):
+    """
+    Expected structure:
+      data/BUSI/{split}/images/*.png
+      data/BUSI/{split}/masks/*.png   (same filenames as images)
+    """
+    def __init__(self, root: str, split: str = "train", image_size: int = 256):
         self.root = root
         self.split = split
-        self.transform = transform
-        self.mask_foreground_threshold = mask_foreground_threshold
-        self.dataset_name = dataset_name
+        self.image_size = image_size
 
-        self.img_dir = os.path.join(root, split, image_dir)
-        self.msk_dir = os.path.join(root, split, mask_dir)
+        img_dir = os.path.join(root, split, "images")
+        msk_dir = os.path.join(root, split, "masks")
 
-        if not os.path.isdir(self.img_dir):
-            raise FileNotFoundError(self.img_dir)
-        if not os.path.isdir(self.msk_dir):
-            raise FileNotFoundError(self.msk_dir)
+        self.img_paths = sorted(glob(os.path.join(img_dir, "*.png")))
+        assert len(self.img_paths) > 0, f"No images found in {img_dir}"
 
-        self.ids = _list_images(self.img_dir)
-        if len(self.ids) == 0:
-            raise RuntimeError(f"No images found in {self.img_dir}")
+        # masks are expected to match filenames
+        self.msk_dir = msk_dir
 
-        # sanity check a couple pairs
-        for fn in self.ids[:3]:
-            mp = os.path.join(self.msk_dir, fn)
-            if not os.path.exists(mp):
-                raise FileNotFoundError(f"Mask not found for {fn}: {mp}")
+    def __len__(self) -> int:
+        return len(self.img_paths)
 
-    def __len__(self):
-        return len(self.ids)
+    def _load_png(self, path: str) -> Image.Image:
+        return Image.open(path).convert("RGB")
 
-    def _read_rgb(self, path: str) -> np.ndarray:
-        img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
-        if img is None:
-            raise FileNotFoundError(path)
-        if img.ndim == 2:
-            img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-        else:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        return img
+    def _load_mask(self, path: str) -> Image.Image:
+        # masks are binary-ish png; keep as L
+        return Image.open(path).convert("L")
 
-    def _read_mask(self, path: str) -> np.ndarray:
-        m = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-        if m is None:
-            raise FileNotFoundError(path)
-        # binarize
-        m = (m >= self.mask_foreground_threshold).astype(np.uint8)
-        return m
+    def __getitem__(self, idx: int) -> Sample:
+        ip = self.img_paths[idx]
+        fn = os.path.basename(ip)
+        mp = os.path.join(self.msk_dir, fn)
+        if not os.path.exists(mp):
+            raise FileNotFoundError(f"Mask not found for image {fn}: expected {mp}")
 
-    def __getitem__(self, idx: int) -> Batch:
-        fn = self.ids[idx]
-        img_path = os.path.join(self.img_dir, fn)
-        msk_path = os.path.join(self.msk_dir, fn)
+        img = self._load_png(ip).resize((self.image_size, self.image_size))
+        msk = self._load_mask(mp).resize((self.image_size, self.image_size))
 
-        image = self._read_rgb(img_path)  # HWC uint8 RGB
-        mask = self._read_mask(msk_path)  # HW uint8 {0,1}
+        img_np = np.array(img, dtype=np.uint8)                  # HWC
+        msk_np = np.array(msk, dtype=np.uint8)                  # HW
 
-        meta: Dict[str, Any] = {
-            "id": fn,
-            "dataset": self.dataset_name,
-            "split": self.split,
-            "image_path": img_path,
-            "mask_path": msk_path,
-        }
+        img_t = torch.from_numpy(img_np).permute(2, 0, 1).float() / 255.0  # [3,H,W]
+        msk_t = (torch.from_numpy(msk_np) > 0).float().unsqueeze(0)        # [1,H,W]
 
-        if self.transform is not None:
-            image, mask, meta = self.transform(image, mask, meta)
-
-        # to tensors
-        image_t = torch.from_numpy(image.astype(np.float32) / 255.0).permute(2, 0, 1)  # [3,H,W]
-        mask_t = torch.from_numpy(mask.astype(np.float32))[None, ...]                  # [1,H,W]
-
-        return Batch(image=image_t, mask=mask_t, meta=meta)
+        meta = {"filename": fn}
+        return Sample(image=img_t, mask=msk_t, meta=meta)
