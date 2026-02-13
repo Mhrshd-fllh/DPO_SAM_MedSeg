@@ -1,0 +1,19 @@
+sam:
+  checkpoint: "checkpoints/sam_med2d.pth"
+  model_type: "vit_b"
+
+train:
+  out_dir: "runs/stage1"
+  epochs: 15
+  batch_size: 4
+  num_workers: 2
+  labeled_frac: 0.1
+
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  lr_step: 10
+  lr_gamma: 0.5
+
+  loss:
+    dice_w: 20.0
+    focal_w: 1.0
