@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
 from core.config import load_config
-from data.busi_dataset import BUSIDataset
+from data.datasets.busi_dataset import BUSIDataset
 from data.collate import collate_samples
 from torch.utils.data import DataLoader
 
@@ -88,7 +88,8 @@ def _draw_points_and_box(image_hwc: np.ndarray, boxes_xyxy: np.ndarray, points_x
 
     fig.canvas.draw()
     w, h = fig.canvas.get_width_height()
-    buf = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8).reshape(h, w, 3)
+    buf = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8).reshape(h, w, 4)
+    buf = buf[:, :, 1:]
     plt.close(fig)
 
     # ensure same size (matplotlib can slightly differ); resize if needed

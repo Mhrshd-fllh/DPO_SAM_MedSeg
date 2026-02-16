@@ -12,7 +12,7 @@ train:
   # ✅ انتخاب prompt source
   # cam = paper-faithful (نیازمند درست شدن CAM)
   # gt  = runnable baseline (فعلاً)
-  prompt_source: "gt"
+  prompt_source: "cam"
 
   freeze_image_encoder: true
 
