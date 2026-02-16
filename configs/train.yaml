@@ -1,5 +1,5 @@
 sam:
-  checkpoint: "checkpoints/sam_med2d.pth"
+  checkpoint: "checkpoints/sam_med2d_vit_b.pth"
   model_type: "vit_b"
 
 train:
