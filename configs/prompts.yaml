@@ -8,11 +8,11 @@ prompts:
     saliency_threshold: 0.3
 
     crf:
-      enabled: false   # روی Colab معمولاً خاموش بهتره
+      enabled: false   
       iters: 5
 
     cam:
-      target_layer: "visual.trunk.blocks.11"
+      target_layer: "visual.trunk.blocks.10.norm"
       use_vit_reshape: true
 
 

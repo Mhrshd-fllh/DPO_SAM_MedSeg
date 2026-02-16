@@ -1,8 +1,10 @@
-busi:
-  name: busi
-  root: "data/BUSI"
-  train_split: "train"
-  test_split: "test"
-  image_dir: "images"
-  mask_dir: "masks"
-  mask_foreground_threshold: 1
+datasets:
+  busi:
+    name: busi
+    root: "data/BUSI"
+    image_size: 256
+    train_split: "train"
+    test_split: "test"
+    image_dir: "images"
+    mask_dir: "masks"
+    mask_foreground_threshold: 1
