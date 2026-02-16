@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from data.datasets.busi_dataset import BUSIDataset
-
+from data.collate import collate_samples
 
 def build_busi_loaders(cfg) -> Tuple[DataLoader, DataLoader]:
     root = cfg["datasets"]["busi"]["root"]
@@ -16,11 +16,21 @@ def build_busi_loaders(cfg) -> Tuple[DataLoader, DataLoader]:
     test_ds = BUSIDataset(root=root, split="test", image_size=image_size)
 
     train_loader = DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=num_workers, pin_memory=True, drop_last=True
+        train_ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+        collate_fn=collate_samples,   # ✅
     )
     test_loader = DataLoader(
-        test_ds, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=True, drop_last=False
+        test_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=False,
+        collate_fn=collate_samples,   # ✅
     )
     return train_loader, test_loader
