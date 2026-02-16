@@ -8,8 +8,8 @@ regex
 
 
 # DenseCRF
-cython
-pydensecrf 
+#cython
+#pydensecrf 
 
 open-clip-torch
 grad-cam

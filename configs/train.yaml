@@ -1,6 +1,7 @@
 sam:
   checkpoint: "checkpoints/sam_med2d_vit_b.pth"
   model_type: "vit_b"
+  strict: false
 
 train:
   out_dir: "runs/stage1"
