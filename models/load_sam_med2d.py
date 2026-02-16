@@ -49,28 +49,26 @@ def load_sam_model(
         pass
 
     # We'll load weights manually after model construction
-    state = torch.load(checkpoint_path, map_location="cpu")
+    state = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
 
     if isinstance(state, dict) and "model" in state and isinstance(state["model"], dict):
-        state_dict = state["model"]
+        sd = state["model"]
     elif isinstance(state, dict) and "state_dict" in state and isinstance(state["state_dict"], dict):
-        state_dict = state["state_dict"]
+        sd = state["state_dict"]
     elif isinstance(state, dict):
-        state_dict = state
+        sd = state
     else:
-        raise RuntimeError(f"Unsupported checkpoint format at {checkpoint_path}")
+        raise RuntimeError("Unsupported checkpoint format")
 
-    def strip_prefix(sd, prefix):
-        out = {}
-        for k, v in sd.items():
-            if k.startswith(prefix):
-                out[k[len(prefix):]] = v
-            else:
-                out[k] = v
-        return out
+    def strip_any_prefix(k: str) -> str:
+        for pfx in ["module.", "sam.", "model.", "net."]:
+            if k.startswith(pfx):
+                return k[len(pfx):]
+        return k
 
-    for pfx in ["module.", "sam."]:
-        state_dict = strip_prefix(state_dict, pfx)
+    state_dict = {strip_any_prefix(k): v for k, v in sd.items()}
+    some_keys = list(state_dict.keys())[:20]
+    print("[ckpt] example keys:", some_keys)
 
     # --- Case B: builder() ---
     try:
@@ -88,11 +86,11 @@ def load_sam_model(
         for a in attrs:
             # reasonable defaults
             if "ckpt" in a or "checkpoint" in a:
-                setattr(args, a, checkpoint_path)
+                setattr(args, a, None)
             elif a in ("device",):
                 setattr(args, a, device)
             elif "img_size" in a or "image_size" in a:
-                setattr(args, a, 1024)  # SAM default
+                setattr(args, a, 256)  # SAM default
             elif "model_type" in a or "vit" in a:
                 setattr(args, a, model_type)
             elif a.startswith("use_") or a.endswith("_enabled"):
