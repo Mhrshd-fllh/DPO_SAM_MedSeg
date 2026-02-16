@@ -68,7 +68,9 @@ def main():
         checkpoint_path=cfg["sam"]["checkpoint"],
         model_type=cfg["sam"]["model_type"],
         device=device,
+        strict=bool(cfg["sam"].get("strict", True)),
     )
+
     model = KonwerSAM2D(sam).to(device)
     freeze_image_encoder_if_needed(model, bool(cfg["train"]["freeze_image_encoder"]))
 
