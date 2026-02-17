@@ -33,9 +33,12 @@ class VisualPromptPipeline:
         self.points_seed = points_seed
         self.saliency_threshold = saliency_threshold
         self.return_artifacts = return_artifacts
-
+        self.artifacts = None
     @torch.no_grad()
     def __call__(self, images: torch.Tensor, class_texts: List[str]) -> VisualPrompts:
+        if self.return_artifacts:
+            self.artifacts = [None] * images.shape[0]
+
         B, _, H, W = images.shape
 
         sal, acts = self.saliency_fn(images, class_texts, self.clip)  # sal: [B,H,W] np
@@ -53,6 +56,7 @@ class VisualPromptPipeline:
                 post = pre
             masks_post.append(post)
 
+
         masks_pre = np.stack(masks_pre, axis=0)     # [B,H,W]
         masks_post = np.stack(masks_post, axis=0)   # [B,H,W]
 
@@ -65,23 +69,33 @@ class VisualPromptPipeline:
         pts_t = torch.from_numpy(pts).to(images.device)
         lbl_t = torch.from_numpy(lbl).to(images.device)
 
-        artifacts = None
         if self.return_artifacts:
-            art: Dict[str, Any] = {
-                "saliency": sal,              # np [B,H,W]
-                "mask_pre": masks_pre,        # np [B,H,W]
-                "mask_post": masks_post,      # np [B,H,W]
-                "mask_cc": closed,            # np [B,H,W]
-                "boxes": boxes,               # np [B,1,4]
-                "points": pts,                # np [B,K,2]
-                "point_labels": lbl,          # np [B,K]
-            }
-            art.update(acts)
-            artifacts = VisualPromptArtifacts(tensors=art)
+            # per-sample dicts for easy dumping
+            self.artifacts = []
+            for i in range(B):
+                d: Dict[str, Any] = {
+                    "saliency": sal[i],          # np [H,W]
+                    "mask_pre": masks_pre[i],    # np [H,W]
+                    "mask_post": masks_post[i],  # np [H,W]
+                    "mask_cc": closed[i],        # np [H,W]
+                    "box": boxes[i],             # np [1,4]
+                    "points": pts[i],            # np [K,2]
+                    "point_labels": lbl[i],      # np [K]
+                }
+                # merge per-sample activations if acts contains batch tensors/arrays
+                # (acts might be empty or may have entries like {'cam':..., 'grads':...})
+                for k, v in acts.items():
+                    try:
+                        # if v is batch-like (B,...) pick ith
+                        d[k] = v[i]
+                    except Exception:
+                        # otherwise store as-is
+                        d[k] = v
+                self.artifacts.append(d)
 
         return VisualPrompts(
             boxes_xyxy=boxes_t,
             points_xy=pts_t,
             points_labels=lbl_t,
-            artifacts=artifacts,
+            artifacts=self.artifacts,
         )
