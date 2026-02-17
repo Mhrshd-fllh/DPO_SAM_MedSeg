@@ -12,7 +12,7 @@ prompts:
       iters: 5
 
     cam:
-      target_layer: "visual.trunk.blocks.10.norm"
+      target_layer: "visual.trunk.blocks.10.norm2"
       use_vit_reshape: true
 
 

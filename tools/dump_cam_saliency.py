@@ -84,7 +84,7 @@ def main():
         sal_u8 = (np.clip(sal, 0, 1) * 255).astype(np.uint8)
         save_gray(os.path.join(sd, "saliency.png"), sal_u8)
 
-        for k in ["pre_mask", "post_mask", "cc_mask"]:
+        for k in ["mask_pre", "mask_post", "mask_cc"]:
             if k in a and a[k] is not None:
                 m = a[k]
                 if isinstance(m, torch.Tensor):

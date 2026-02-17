@@ -17,6 +17,10 @@ def _resolve_layer(model: nn.Module, layer_path: str) -> nn.Module:
             obj = getattr(obj, part)
     return obj
 
+def _patch_openclip_tokenizer(t):
+    if hasattr(t, "tokenizer") and not hasattr(t.tokenizer, "batch_encode_plus"):
+        t.tokenizer.batch_encode_plus = lambda texts, **kw: t.tokenizer(texts, **kw)
+    return t
 
 class BiomedCLIPAdapter:
     """
@@ -28,7 +32,7 @@ class BiomedCLIPAdapter:
     def __init__(self, model, preprocess, tokenizer, device="cuda"):
         self.model = model
         self.preprocess = preprocess
-        self.tokenizer = tokenizer
+        self.tokenizer = _patch_openclip_tokenizer(tokenizer)
         self.device = device
         self.model.to(device).eval()
 
