@@ -24,3 +24,10 @@ train:
   loss:
     dice_w: 20.0
     focal_w: 1.0
+
+
+fusion:
+  enabled: true
+  mode: "residual_mul"
+  alpha: 1.0
+  lambda_logits: 0.5
