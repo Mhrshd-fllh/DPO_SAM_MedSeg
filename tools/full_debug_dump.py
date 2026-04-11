@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from core.config import load_config
 from torch.utils.data import DataLoader
 
-from data.busi_dataset import BUSIDataset
+from data.datasets.busi_dataset import BUSIDataset
 from data.collate import collate_samples
 
 from models.load_sam_med2d import load_sam_model
@@ -20,7 +20,7 @@ from models.konwer_sam2d import KonwerSAM2D
 
 # Fused model (new branch)
 from models.fusion_cam_encoder import CAMEncoderFusion
-from models.konwer_sam2d_fused import KonwerSAM2DFused
+from models.konwer_sam2d_fuser import KonwerSAM2DFused
 
 from prompts.visual.gt_visual_prompts import build_visual_prompts_from_gt_masks
 

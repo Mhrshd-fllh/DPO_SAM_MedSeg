@@ -47,7 +47,7 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
     cfg = load_config(args.config, args.prompts, args.datasets)
 
-    train_ds, test_ds = build_busi_datasets(cfg)
+    train_ds, test_ds = build_busi_dataloaders(cfg)
     ds = train_ds if args.split == "train" else test_ds
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
