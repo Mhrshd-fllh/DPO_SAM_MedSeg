@@ -5,7 +5,7 @@ import cv2
 import torch
 
 from core.config import load_config
-from data.dataloader import build_busi_datasets
+from data.dataloader import build_busi_dataloaders
 from prompts.visual.load_biomedclip import load_biomedclip
 from prompts.visual.biomedclip_gscorecam import BiomedCLIPAdapter, GScoreCAMSaliency
 from prompts.visual.visual_prompt_pipeline import VisualPromptPipeline
