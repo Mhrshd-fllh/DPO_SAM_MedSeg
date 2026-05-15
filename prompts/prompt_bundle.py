@@ -20,6 +20,15 @@ class PromptBundleBuilder:
         class_texts: List[str],
         labels: Optional[List[str]] = None,
     ) -> PromptBundle:
-        vp = self.visual(images, class_texts)
         tp = self.text(images=images, labels=labels)
+        fused_texts = []
+        for cls_txt, txt in zip(class_texts, tp.text):
+            if txt.strip():
+                fused = f"{cls_txt}. {txt}"
+            else:
+                fused = cls_txt
+            fused_texts.append(fused)
+
+        vp = self.visual(images, fused_texts)
+
         return PromptBundle(visual=vp, text=tp)
