@@ -12,3 +12,11 @@ def load_biomedclip(device: str = "cuda"):
     tokenizer = open_clip.get_tokenizer(model_id)
     model = model.to(device).eval()
     return model, preprocess, tokenizer
+
+
+def encode_text(model, tokenizer, texts, device):
+    tokens = tokenizer(texts).to(device)
+    with torch.no_grad():
+        feats = model.encode_text(tokens)
+        feats = feats / feats.norm(dim=-1, keepdim=True)
+    return feats

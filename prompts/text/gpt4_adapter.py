@@ -36,7 +36,7 @@ class OpenAIGPTAdapter:
         self.system_prompt = system_prompt
         self.max_tokens = max_tokens
         self.temperature = temperature
-
+        self.cache = []
     def describe(self, labels: List[str]) -> GPTResult:
         """
         labels: list[str] length B (e.g., organ/disease label).
@@ -45,10 +45,26 @@ class OpenAIGPTAdapter:
         descs: List[str] = []
 
         for lab in labels:
-            user_prompt = (
-                "Write one short generic description (1 sentence) for a medical image related to this label: "
-                f"{lab}. Avoid specific measurements. Keep it general."
-            )
+            if lab in self.cache:
+                descs.append(self.cache[lab])
+                continue
+            user_prompt = f"""
+                                Provide one concise medical imaging description
+                                for: {lab}
+
+                                Focus on:
+                                - shape
+                                - margins
+                                - texture
+                                - anatomical appearance
+
+                                Avoid:
+                                - measurements
+                                - treatment
+                                - patient info
+
+                                Return exactly one sentence.
+                                """
 
             resp = self.client.chat.completions.create(
                 model=self.model,
@@ -62,5 +78,6 @@ class OpenAIGPTAdapter:
 
             txt = resp.choices[0].message.content.strip()
             descs.append(txt)
+            self.cache[lab] = txt
 
         return GPTResult(descriptions=descs)

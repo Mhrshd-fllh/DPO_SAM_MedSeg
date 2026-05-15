@@ -20,7 +20,7 @@ prompts:
     question_template: "Question: {}, Answer is:"
     question: "What is the shape of breast tumor and where is it located?"
     vqa_enabled: true
-    gpt_enabled: false
+    gpt_enabled: true
 
     vqa_model_id: "Salesforce/blip-vqa-base"
     gpt_model: "gpt-4o-mini"

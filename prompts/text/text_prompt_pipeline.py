@@ -91,7 +91,10 @@ class TextPromptPipeline:
         out_text: List[str] = []
         for a, d in zip(vqa_answers, gpt_descs):
             if a and d:
-                out_text.append(a + " " + d)
+                out_text.append(
+                                f"Shape and location: {a}. "
+                                f"Medical characteristics: {d}"
+                            )
             elif a:
                 out_text.append(a)
             elif d:

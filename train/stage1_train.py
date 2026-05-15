@@ -16,7 +16,7 @@ from prompts.visual.load_biomedclip import load_biomedclip
 from prompts.visual.biomedclip_gscorecam import BiomedCLIPAdapter, GScoreCAMSaliency
 from prompts.visual.visual_prompt_pipeline import VisualPromptPipeline
 from prompts.visual.gt_visual_prompts import build_visual_prompts_from_gt_masks
-
+from prompts.text.text_prompt_pipeline import TextPromptPipeline, TextPromptConfig
 
 def freeze_image_encoder_if_needed(model: KonwerSAM2D, freeze: bool):
     if not freeze:
@@ -62,6 +62,13 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     train_loader, test_loader = build_busi_loaders(cfg)
+
+    text_cfg = TextPromptConfig(
+    vqa_enabled=True, 
+    gpt_enabled=True,
+    gpt_model=cfg["prompts"]["text"].get("gpt_model", "gpt-4o-mini")
+    )
+    text_pipeline = TextPromptPipeline(text_cfg, device=device)
 
     # SAM-Med2D / SAM
     sam = load_sam_model(
@@ -110,6 +117,7 @@ def main():
         for batch in train_loader:
             images = batch.image.to(device)
             masks = batch.mask.to(device)
+            labels = batch.get("label", None)
 
             if prompt_source == "gt":
                 vp = build_visual_prompts_from_gt_masks(
@@ -121,7 +129,10 @@ def main():
                 class_texts = [class_text] * images.shape[0]
                 vp = cam_pipeline(images, class_texts)
 
-            out = model(images, vp)
+
+            tp = text_pipeline(images, labels=labels)
+
+            out = model(images, visual_prompts=vp, text_prompts=tp)
             loss = crit(out.mask_logits, masks)
 
             opt.zero_grad(set_to_none=True)
