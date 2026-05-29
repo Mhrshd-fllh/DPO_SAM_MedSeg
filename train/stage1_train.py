@@ -117,7 +117,7 @@ def main():
         for batch in train_loader:
             images = batch.image.to(device)
             masks = batch.mask.to(device)
-            labels = batch.get("label", None)
+            labels = getattr(batch, "label", None)
 
             if prompt_source == "gt":
                 vp = build_visual_prompts_from_gt_masks(
