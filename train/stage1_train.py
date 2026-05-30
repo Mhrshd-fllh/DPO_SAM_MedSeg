@@ -17,6 +17,7 @@ from prompts.visual.biomedclip_gscorecam import BiomedCLIPAdapter, GScoreCAMSali
 from prompts.visual.visual_prompt_pipeline import VisualPromptPipeline
 from prompts.visual.gt_visual_prompts import build_visual_prompts_from_gt_masks
 from prompts.text.text_prompt_pipeline import TextPromptPipeline, TextPromptConfig
+from prompts.text.text_encoder import TextEncoderAdapter
 
 def freeze_image_encoder_if_needed(model: KonwerSAM2D, freeze: bool):
     if not freeze:
@@ -63,12 +64,17 @@ def main():
 
     train_loader, test_loader = build_busi_loaders(cfg)
 
+    # Initialize text prompt pipeline
     text_cfg = TextPromptConfig(
-    vqa_enabled=True, 
-    gpt_enabled=True,
-    gpt_model=cfg["prompts"]["text"].get("gpt_model", "gpt-4o-mini")
+        vqa_enabled=bool(cfg["prompts"]["text"].get("vqa_enabled", True)),
+        gpt_enabled=bool(cfg["prompts"]["text"].get("gpt_enabled", False)),
+        gpt_model=cfg["prompts"]["text"].get("gpt_model", "gpt-4o-mini"),
     )
     text_pipeline = TextPromptPipeline(text_cfg, device=device)
+
+    # Load BiomedCLIP for text encoding
+    clip_model, _, tokenizer = load_biomedclip(device=device)
+    text_encoder = TextEncoderAdapter(model=clip_model, tokenizer=tokenizer, device=device)
 
     # SAM-Med2D / SAM
     sam = load_sam_model(
@@ -78,7 +84,13 @@ def main():
         strict=bool(cfg["sam"].get("strict", True)),
     )
 
-    model = KonwerSAM2D(sam).to(device)
+    # Konwer with text prompt support
+    fusion_mode = cfg["train"].get("text_fusion_mode", "concat")
+    model = KonwerSAM2D(
+        sam, 
+        text_encoder=text_encoder,
+        fusion_mode=fusion_mode
+    ).to(device)
     freeze_image_encoder_if_needed(model, bool(cfg["train"]["freeze_image_encoder"]))
 
     # visual prompt source
@@ -129,10 +141,11 @@ def main():
                 class_texts = [class_text] * images.shape[0]
                 vp = cam_pipeline(images, class_texts)
 
-
+            # Generate text prompts
             tp = text_pipeline(images, labels=labels)
 
-            out = model(images, visual_prompts=vp, text_prompts=tp)
+            # Forward pass with both visual and text prompts
+            out = model(images, vp=vp, tp=tp)
             loss = crit(out.mask_logits, masks)
 
             opt.zero_grad(set_to_none=True)
@@ -150,6 +163,7 @@ def main():
             for batch in test_loader:
                 images = batch.image.to(device)
                 masks = batch.mask.to(device)
+                labels = getattr(batch, "label", None)
 
                 if prompt_source == "gt":
                     vp = build_visual_prompts_from_gt_masks(
@@ -161,7 +175,11 @@ def main():
                     class_texts = [class_text] * images.shape[0]
                     vp = cam_pipeline(images, class_texts)
 
-                out = model(images, vp)
+                # Generate text prompts
+                tp = text_pipeline(images, labels=labels)
+
+                # Forward pass with both prompts
+                out = model(images, vp=vp, tp=tp)
                 d = dice_coeff(out.mask_logits, masks).item()
                 dices.append(d)
 
@@ -190,3 +208,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
