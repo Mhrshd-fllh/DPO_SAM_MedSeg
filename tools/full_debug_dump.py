@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from core.config import load_config
 from torch.utils.data import DataLoader
 
-from data.busi_dataset import BUSIDataset
+from data.datasets.busi_dataset import BUSIDataset
 from data.collate import collate_samples
 
 from models.load_sam_med2d import load_sam_model
