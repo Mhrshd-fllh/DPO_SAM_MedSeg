@@ -36,7 +36,7 @@ class OpenAIGPTAdapter:
         self.system_prompt = system_prompt
         self.max_tokens = max_tokens
         self.temperature = temperature
-        self.cache = []
+        self.cache: dict[str, str] = {}
     def describe(self, labels: List[str]) -> GPTResult:
         """
         labels: list[str] length B (e.g., organ/disease label).
