@@ -69,9 +69,10 @@ class VisualPromptPipeline:
         pts_t = torch.from_numpy(pts).to(images.device)
         lbl_t = torch.from_numpy(lbl).to(images.device)
 
+        batch_artifacts = None
         if self.return_artifacts:
             # per-sample dicts for easy dumping
-            self.artifacts = []
+            per_sample_artifacts = []
             for i in range(B):
                 d: Dict[str, Any] = {
                     "saliency": sal[i],          # np [H,W]
@@ -91,11 +92,26 @@ class VisualPromptPipeline:
                     except Exception:
                         # otherwise store as-is
                         d[k] = v
-                self.artifacts.append(d)
+                per_sample_artifacts.append(d)
+            
+            # Store per-sample artifacts for external access
+            self.artifacts = per_sample_artifacts
+            
+            # Create batch-level artifacts dict (for VisualPromptArtifacts)
+            batch_artifacts_dict: Dict[str, Any] = {
+                "saliency": sal,          # np [B,H,W]
+                "mask_pre": masks_pre,    # np [B,H,W]
+                "mask_post": masks_post,  # np [B,H,W]
+                "mask_cc": closed,        # np [B,H,W]
+                "boxes": boxes,           # np [B,1,4]
+                "points": pts,            # np [B,K,2]
+                "point_labels": lbl,      # np [B,K]
+            }
+            batch_artifacts = VisualPromptArtifacts(tensors=batch_artifacts_dict)
 
         return VisualPrompts(
             boxes_xyxy=boxes_t,
             points_xy=pts_t,
             points_labels=lbl_t,
-            artifacts=self.artifacts,
+            artifacts=batch_artifacts,
         )
