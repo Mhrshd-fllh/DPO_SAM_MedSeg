@@ -225,7 +225,7 @@ def _dump_branch(
     save_rgb(os.path.join(sample_dir, f"{tag}_error_map.png"), err_rgb)
 
     # metrics
-    m = metrics_from_masks(pred_i, torch.from_numpy((gt_u8 > 0).astype(np.float32)).unsqueeze(0))
+    m = metrics_from_masks(pred_i, torch.from_numpy((gt_u8 > 0).astype(np.float32)).unsqueeze(0).to(pred_i.device))
     save_json(os.path.join(sample_dir, f"{tag}_metrics.json"), m)
 
 
@@ -427,7 +427,11 @@ def main():
             ax.scatter(pts_np[neg, 0], pts_np[neg, 1], s=30, marker="x")
         fig.tight_layout(pad=0)
         fig.canvas.draw()
-        buf = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8).reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        
+        # --- FIXED MATPLOTLIB BUFFER EXTRACTION HERE ---
+        rgba_buf = fig.canvas.buffer_rgba()
+        buf = np.asarray(rgba_buf)[..., :3]
+        
         plt.close(fig)
         save_rgb(os.path.join(sample_dir, "21_prompts_overlay.png"), buf)
 
