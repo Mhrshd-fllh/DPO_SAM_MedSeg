@@ -9,6 +9,8 @@ from core.config import load_config
 from data.dataloader import build_busi_loaders
 from models.load_sam_med2d import load_sam_model
 from models.konwer_sam2d import KonwerSAM2D
+from models.konwer_sam2d_fuser import KonwerSAM2DFused           # Added imports
+from models.fusion_cam_encoder import CAMEncoderFusion         # Added imports
 from losses.combo import DiceFocalCombo
 from eval.metrics import dice_coeff
 
@@ -19,15 +21,16 @@ from prompts.visual.gt_visual_prompts import build_visual_prompts_from_gt_masks
 from prompts.text.text_prompt_pipeline import TextPromptPipeline, TextPromptConfig
 from prompts.text.text_encoder import TextEncoderAdapter
 
-def freeze_image_encoder_if_needed(model: KonwerSAM2D, freeze: bool):
+def freeze_image_encoder_if_needed(model: torch.nn.Module, freeze: bool):
     if not freeze:
         return
-    for p in model.sam.image_encoder.parameters():
+    # Support both wrapped configurations
+    target_model = model.sam if hasattr(model, "sam") else model
+    for p in target_model.image_encoder.parameters():
         p.requires_grad = False
 
 
 def build_cam_visual_pipeline(cfg, device: str) -> VisualPromptPipeline:
-    # BiomedCLIP
     clip_model, preprocess, tokenizer = load_biomedclip(device=device)
     clip_adapter = BiomedCLIPAdapter(model=clip_model, preprocess=preprocess, tokenizer=tokenizer, device=device)
 
@@ -46,7 +49,7 @@ def build_cam_visual_pipeline(cfg, device: str) -> VisualPromptPipeline:
         crf_iters=int(cfg["prompts"]["visual"]["crf"]["iters"]),
         points_seed=int(cfg["prompts"]["visual"]["points_seed"]),
         saliency_threshold=float(cfg["prompts"]["visual"]["saliency_threshold"]),
-        return_artifacts=False,   # training: no need artifacts
+        return_artifacts=True,   # 🔥 Set to True so artifacts (saliency maps) are passed down the pipeline!
     )
     return vp
 
@@ -84,16 +87,31 @@ def main():
         strict=bool(cfg["sam"].get("strict", True)),
     )
 
-    # Konwer with text prompt support
-    fusion_mode = cfg["train"].get("text_fusion_mode", "concat")
-    model = KonwerSAM2D(
-        sam, 
-        text_encoder=text_encoder,
-        fusion_mode=fusion_mode
-    ).to(device)
+    # 🔥 DYNAMIC SWITCH: Choose model architecture variant based on train.yaml switches
+    use_visual_fuser = cfg.get("fusion", {}).get("enabled", False)
+    
+    if use_visual_fuser:
+        print("Initializing visual gating branch: [KonwerSAM2DFused]")
+        fusion_module = CAMEncoderFusion(
+            mode=cfg["fusion"].get("mode", "residual_mul"),
+            alpha=float(cfg["fusion"].get("alpha", 1.0)),
+        )
+        model = KonwerSAM2DFused(
+            sam=sam,
+            fusion=fusion_module,
+            lambda_logits=float(cfg["fusion"].get("lambda_logits", 0.5))
+        ).to(device)
+    else:
+        print("Initializing text baseline branch: [KonwerSAM2D]")
+        fusion_mode = cfg["train"].get("text_fusion_mode", "concat")
+        model = KonwerSAM2D(
+            sam, 
+            text_encoder=text_encoder,
+            fusion_mode=fusion_mode
+        ).to(device)
+
     freeze_image_encoder_if_needed(model, bool(cfg["train"]["freeze_image_encoder"]))
 
-    # visual prompt source
     prompt_source = cfg["train"]["prompt_source"]  # "cam" or "gt"
     if prompt_source not in ("cam", "gt"):
         raise ValueError("train.prompt_source must be 'cam' or 'gt'")
@@ -144,11 +162,21 @@ def main():
             # Generate text prompts
             tp = text_pipeline(images, labels=labels)
 
-            # Forward pass with both visual and text prompts
-            out = model(images, vp=vp, tp=tp)
-            loss = crit(out.mask_logits, masks)
-
             opt.zero_grad(set_to_none=True)
+
+            # 🔥 DYNAMIC FORWARD & LOSS COMPUTATION BLOCK
+            if use_visual_fuser:
+                # KonwerSAM2DFused pass
+                out = model(images, visual_prompts=vp)
+                # Compute loss directly on the combined prediction map
+                loss = crit(out.combined_mask_logits, masks)
+                pred_logits = out.combined_mask_logits
+            else:
+                # KonwerSAM2D text variant pass
+                out = model(images, vp=vp, tp=tp)
+                loss = crit(out.mask_logits, masks)
+                pred_logits = out.mask_logits
+
             loss.backward()
             opt.step()
 
@@ -175,12 +203,16 @@ def main():
                     class_texts = [class_text] * images.shape[0]
                     vp = cam_pipeline(images, class_texts)
 
-                # Generate text prompts
                 tp = text_pipeline(images, labels=labels)
 
-                # Forward pass with both prompts
-                out = model(images, vp=vp, tp=tp)
-                d = dice_coeff(out.mask_logits, masks).item()
+                if use_visual_fuser:
+                    out = model(images, visual_prompts=vp)
+                    pred_logits = out.combined_mask_logits
+                else:
+                    out = model(images, vp=vp, tp=tp)
+                    pred_logits = out.mask_logits
+
+                d = dice_coeff(pred_logits, masks).item()
                 dices.append(d)
 
         mean_dice = sum(dices) / max(1, len(dices))
@@ -188,7 +220,6 @@ def main():
 
         print(f"[Epoch {ep:02d}] loss={mean_loss:.4f}  val_dice={mean_dice:.4f}")
 
-        # checkpoint
         ckpt = {
             "epoch": ep,
             "model": model.state_dict(),
@@ -208,4 +239,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -22,11 +22,11 @@ train:
   lr_gamma: 0.5
 
   loss:
-    dice_w: 20.0
-    focal_w: 1.0
+    dice_w: 1.0
+    focal_w: 20.0
 
   # Text-visual prompt fusion
-  text_fusion_mode: "concat"  # "concat", "weighted_sum", or "attention"
+  text_fusion_mode: "dense_add"  # "concat", "weighted_sum", or "attention"
 
 
 fusion:

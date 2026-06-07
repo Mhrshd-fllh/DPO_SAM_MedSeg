@@ -73,16 +73,22 @@ class KonwerSAM2D(nn.Module):
 
         # Fuse text embeddings if provided
         if tp is not None and self.text_encoder is not None and self.prompt_fuser is not None:
-            # Encode text
-            text_embeddings = self.text_encoder.encode(tp.text)  # [B, 512]
-            # Fuse with visual prompts
-            sparse_embeddings = self.prompt_fuser(sparse_embeddings, text_embeddings)
+            # Encode text -> [B, 512]
+            text_embeddings = self.text_encoder.encode(tp.text)  
+            
+            # Pass BOTH sparse and dense tensors to allow dense_add/dense_mul modes
+            sparse_embeddings, dense_embeddings = self.prompt_fuser(
+                sparse_embeddings, 
+                dense_embeddings, 
+                text_embeddings
+            )
 
+        # Feed the updated dense prompt embeddings into the decoder
         low_res_masks, iou_predictions = self.sam.mask_decoder(
             image_embeddings=image_embeddings,
             image_pe=self.sam.prompt_encoder.get_dense_pe(),
             sparse_prompt_embeddings=sparse_embeddings,
-            dense_prompt_embeddings=dense_embeddings,
+            dense_prompt_embeddings=dense_embeddings, # Fused text content integrated here
             multimask_output=False,
         )
         # low_res_masks: [B,1,h,w] (usually 256/4 etc)
