@@ -68,7 +68,12 @@ class TextPromptPipeline:
         labels: optional list[str] length B (used by GPT)
         """
         B = images.shape[0]
-        labels = labels or ["unknown"] * B
+        if labels is None:
+            label_list = ["unknown"] * B
+        else:
+            label_list = [str(label) for label in labels]
+            if len(label_list) != B:
+                raise ValueError(f"labels length must match batch size. got {len(label_list)} vs {B}")
 
         # Build questions
         q = self.cfg.question_template.format(self.cfg.question)
@@ -84,7 +89,7 @@ class TextPromptPipeline:
         # GPT
         gpt_descs = [""] * B
         if self.cfg.gpt_enabled:
-            gpt_res = self.gpt.describe(labels)
+            gpt_res = self.gpt.describe(label_list)
             gpt_descs = [d.strip() for d in gpt_res.descriptions]
 
         # Concatenate
@@ -102,4 +107,9 @@ class TextPromptPipeline:
             else:
                 out_text.append("")
 
-        return TextPrompts(text=out_text)
+        return TextPrompts(
+            text=out_text,
+            vqa_answers=vqa_answers,
+            gpt_descriptions=gpt_descs,
+            labels=label_list,
+        )

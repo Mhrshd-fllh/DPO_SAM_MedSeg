@@ -69,8 +69,14 @@ def main():
 
     # Initialize text prompt pipeline
     text_cfg = TextPromptConfig(
+        question_template=cfg["prompts"]["text"].get("question_template", "Question: {}, Answer is:"),
+        question=cfg["prompts"]["text"].get(
+            "question",
+            "What is the shape of breast tumor and where is it located?",
+        ),
         vqa_enabled=bool(cfg["prompts"]["text"].get("vqa_enabled", True)),
         gpt_enabled=bool(cfg["prompts"]["text"].get("gpt_enabled", False)),
+        vqa_model_id=cfg["prompts"]["text"].get("vqa_model_id", "Salesforce/blip-vqa-base"),
         gpt_model=cfg["prompts"]["text"].get("gpt_model", "gpt-4o-mini"),
     )
     text_pipeline = TextPromptPipeline(text_cfg, device=device)
