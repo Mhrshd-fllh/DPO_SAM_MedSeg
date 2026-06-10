@@ -30,7 +30,7 @@ train:
 
 
 fusion:
-  enabled: false
+  enabled: true
   mode: "residual_mul"
   alpha: 1.0
   lambda_logits: 0.5

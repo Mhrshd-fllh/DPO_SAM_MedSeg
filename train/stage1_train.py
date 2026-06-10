@@ -9,8 +9,8 @@ from core.config import load_config
 from data.dataloader import build_busi_loaders
 from models.load_sam_med2d import load_sam_model
 from models.konwer_sam2d import KonwerSAM2D
-from models.konwer_sam2d_fuser import KonwerSAM2DFused           # Added imports
-from models.fusion_cam_encoder import CAMEncoderFusion         # Added imports
+from models.konwer_sam2d_fuser import KonwerSAM2DFused           
+# ❌ Removed CAMEncoderFusion import as it is replaced by our learnable fuser module
 from losses.combo import DiceFocalCombo
 from eval.metrics import dice_coeff
 
@@ -24,7 +24,6 @@ from prompts.text.text_encoder import TextEncoderAdapter
 def freeze_image_encoder_if_needed(model: torch.nn.Module, freeze: bool):
     if not freeze:
         return
-    # Support both wrapped configurations
     target_model = model.sam if hasattr(model, "sam") else model
     for p in target_model.image_encoder.parameters():
         p.requires_grad = False
@@ -49,7 +48,7 @@ def build_cam_visual_pipeline(cfg, device: str) -> VisualPromptPipeline:
         crf_iters=int(cfg["prompts"]["visual"]["crf"]["iters"]),
         points_seed=int(cfg["prompts"]["visual"]["points_seed"]),
         saliency_threshold=float(cfg["prompts"]["visual"]["saliency_threshold"]),
-        return_artifacts=True,   # 🔥 Set to True so artifacts (saliency maps) are passed down the pipeline!
+        return_artifacts=True,   # Passed down so saliency maps are accessible in artifacts
     )
     return vp
 
@@ -87,18 +86,14 @@ def main():
         strict=bool(cfg["sam"].get("strict", True)),
     )
 
-    # 🔥 DYNAMIC SWITCH: Choose model architecture variant based on train.yaml switches
+    # Choose model architecture variant based on train.yaml switches
     use_visual_fuser = cfg.get("fusion", {}).get("enabled", False)
     
     if use_visual_fuser:
-        print("Initializing visual gating branch: [KonwerSAM2DFused]")
-        fusion_module = CAMEncoderFusion(
-            mode=cfg["fusion"].get("mode", "residual_mul"),
-            alpha=float(cfg["fusion"].get("alpha", 1.0)),
-        )
+        print("🚀 Initializing Learnable Red-Mask Gating Branch: [KonwerSAM2DFused]")
+        # ✅ Fixed: Instantiating without the old static fusion module argument
         model = KonwerSAM2DFused(
             sam=sam,
-            fusion=fusion_module,
             lambda_logits=float(cfg["fusion"].get("lambda_logits", 0.5))
         ).to(device)
     else:
@@ -125,6 +120,8 @@ def main():
         focal_w=float(cfg["train"]["loss"]["focal_w"]),
     )
 
+    # ✅ Note: The filter function will automatically include our learnable 
+    # red_mask_fuser.parameters() because they require grad and belong to the model!
     opt = AdamW(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=float(cfg["train"]["lr"]),
@@ -164,11 +161,10 @@ def main():
 
             opt.zero_grad(set_to_none=True)
 
-            # 🔥 DYNAMIC FORWARD & LOSS COMPUTATION BLOCK
+            # DYNAMIC FORWARD & LOSS COMPUTATION BLOCK
             if use_visual_fuser:
-                # KonwerSAM2DFused pass
+                # KonwerSAM2DFused pass (The red mask features are safely processed inside)
                 out = model(images, visual_prompts=vp)
-                # Compute loss directly on the combined prediction map
                 loss = crit(out.combined_mask_logits, masks)
                 pred_logits = out.combined_mask_logits
             else:

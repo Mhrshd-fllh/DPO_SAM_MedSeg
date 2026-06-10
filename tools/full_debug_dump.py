@@ -18,8 +18,7 @@ from data.collate import collate_samples
 from models.load_sam_med2d import load_sam_model
 from models.konwer_sam2d import KonwerSAM2D
 
-# Fused model (new branch)
-from models.fusion_cam_encoder import CAMEncoderFusion
+# ❌ Removed CAMEncoderFusion as it is replaced by our learnable red_mask_fuser module
 from models.konwer_sam2d_fuser import KonwerSAM2DFused
 
 from prompts.visual.gt_visual_prompts import build_visual_prompts_from_gt_masks
@@ -43,8 +42,11 @@ def ensure_dir(p: str):
 
 def to_uint8_img(x: torch.Tensor) -> np.ndarray:
     x = x.detach().float().cpu().clamp(0, 1)
-    x = (x * 255.0).byte().permute(1, 2, 0).numpy()
-    return x
+    if x.shape[0] == 3:
+        x = x.permute(1, 2, 0)
+    elif x.shape[0] == 1:
+        x = x.squeeze(0)
+    return (x.numpy() * 255.0).astype(np.uint8)
 
 
 def save_rgb(path: str, hwc_u8: np.ndarray):
@@ -59,7 +61,9 @@ def save_gray(path: str, hw_u8: np.ndarray):
 
 def overlay_mask(img_u8: np.ndarray, mask_u8: np.ndarray, alpha: float = 0.45) -> np.ndarray:
     img = img_u8.astype(np.float32)
-    m = (mask_u8.astype(np.float32) / 255.0)[..., None]
+    m = (mask_u8.astype(np.float32) / 255.0)
+    if m.ndim == 2:
+        m = m[..., None]
     ov = img.copy()
     ov[..., 0] = np.clip(ov[..., 0] + 255.0 * m[..., 0], 0, 255)
     out = (1 - alpha) * img + alpha * ov
@@ -161,15 +165,12 @@ def error_map_u8(pred_u8: np.ndarray, gt_u8: np.ndarray) -> np.ndarray:
     fn = (~p) & g
     H, W = pred_u8.shape
     out = np.zeros((H, W, 3), dtype=np.uint8)
-    out[tp, 1] = 255  # Green
-    out[fp, 0] = 255  # Red
-    out[fn, 2] = 255  # Blue
+    out[tp, 1] = 255  # Green for True Positives
+    out[fp, 0] = 255  # Red for False Positives (Over-segmentation)
+    out[fn, 2] = 255  # Blue for False Negatives (Under-segmentation)
     return out
 
 
-# -------------------------
-# CAM pipeline builder
-# -------------------------
 def build_cam_pipeline(cfg: Dict[str, Any], device: str) -> VisualPromptPipeline:
     clip_model, preprocess, tokenizer = load_biomedclip(device=device)
     clip_adapter = BiomedCLIPAdapter(model=clip_model, preprocess=preprocess, tokenizer=tokenizer, device=device)
@@ -253,9 +254,6 @@ def main():
 
     fusion_cfg = cfg.get("fusion", {})
     fusion_enabled = bool(fusion_cfg.get("enabled", True))
-    fusion_mode = str(fusion_cfg.get("mode", "residual_mul"))
-    fusion_alpha = float(fusion_cfg.get("alpha", 1.0))
-    fusion_beta = float(fusion_cfg.get("beta", 0.5))
     lambda_logits = float(fusion_cfg.get("lambda_logits", 0.5))
 
     ensure_dir(args.out_dir)
@@ -267,10 +265,8 @@ def main():
             "ckpt": args.ckpt,
             "fusion": {
                 "enabled": fusion_enabled,
-                "mode": fusion_mode,
-                "alpha": fusion_alpha,
-                "beta": fusion_beta,
                 "lambda_logits": lambda_logits,
+                "fuser_type": "LearnableRedMaskSpatialFuser" if fusion_enabled else "None"
             },
             "sam": cfg.get("sam", {}),
             "datasets": cfg.get("datasets", {}),
@@ -291,7 +287,7 @@ def main():
     labels = getattr(batch, "label", None)
     B, _, H, W = images.shape
 
-    # Initialize text prompt components matching train loop setup
+    # Initialize text pipeline components
     text_cfg = TextPromptConfig(
         vqa_enabled=bool(cfg["prompts"]["text"].get("vqa_enabled", True)),
         gpt_enabled=bool(cfg["prompts"]["text"].get("gpt_enabled", False)),
@@ -309,10 +305,9 @@ def main():
         strict=bool(cfg["sam"].get("strict", False)),
     )
 
-    # Build model variant structure
+    # ✅ Fixed: Instantiating the clean, unified learnable model structure
     if fusion_enabled:
-        fusion = CAMEncoderFusion(mode=fusion_mode, alpha=fusion_alpha, beta=fusion_beta)
-        model = KonwerSAM2DFused(sam, fusion=fusion, lambda_logits=lambda_logits).to(device).eval()
+        model = KonwerSAM2DFused(sam, lambda_logits=lambda_logits).to(device).eval()
     else:
         text_fusion_mode = cfg["train"].get("text_fusion_mode", "concat")
         model = KonwerSAM2D(sam, text_encoder=text_encoder, fusion_mode=text_fusion_mode).to(device).eval()
@@ -341,10 +336,9 @@ def main():
         if hasattr(cam_pipeline, "artifacts") and cam_pipeline.artifacts is not None:
             artifacts_per_sample = cam_pipeline.artifacts
 
-    # Generate multi-modal text token maps
     tp_data = text_pipeline(images, labels=labels)
 
-    # Forward routing to capture proper outputs depending on variant class
+    # Forward routing based on chosen model variant
     if fusion_enabled:
         out = model(images, visual_prompts=visual_prompts)
         logits_base = out.baseline_mask_logits
@@ -368,7 +362,7 @@ def main():
     # Dump per sample loops
     for i in range(B):
         fn = "unknown"
-        if "filename" in batch.meta:
+        if "filename" in batch.meta and i < len(batch.meta["filename"]):
             fn = str(batch.meta["filename"][i])
 
         sample_dir = os.path.join(args.out_dir, f"{args.split}_{i:02d}_{fn}")
@@ -392,7 +386,6 @@ def main():
         save_array_npy(os.path.join(sample_dir, "prompt_points.npy"), pts_np)
         save_array_npy(os.path.join(sample_dir, "prompt_point_labels.npy"), lbl_np)
 
-        # Retrieve text prompt logs if present
         current_text_prompt = tp_data[i] if isinstance(tp_data, list) and i < len(tp_data) else str(tp_data)
 
         prompt_txt = "\n".join(
@@ -412,9 +405,10 @@ def main():
         ax = plt.gca()
         ax.imshow(img_u8)
         ax.axis("off")
-        x1, y1, x2, y2 = box_np[0]
-        rect = plt.Rectangle((x1, y1), x2 - x1, y2 - y1, fill=False, linewidth=2, color="red")
-        ax.add_patch(rect)
+        if box_np.size >= 4:
+            x1, y1, x2, y2 = box_np[0][:4]
+            rect = plt.Rectangle((x1, y1), x2 - x1, y2 - y1, fill=False, linewidth=2, color="red")
+            ax.add_patch(rect)
         pos = lbl_np > 0
         neg = lbl_np == 0
         if pos.any():
@@ -497,6 +491,7 @@ def main():
                 pred_i=pred_comb[i],
             )
 
+            # 🚀 NEW ADDITION: Detailed feature activation analytics for your new block!
             if fusion_artifacts is not None:
                 try:
                     gate = fusion_artifacts.gate[i]
@@ -508,6 +503,15 @@ def main():
                     save_tensor_pt(os.path.join(sample_dir, "71_saliency_e.pt"), sal_e)
                     sal_e_u8 = (sal_e[0].detach().cpu().clamp(0, 1).numpy() * 255).astype(np.uint8)
                     save_gray(os.path.join(sample_dir, "71_saliency_e.png"), sal_e_u8)
+                    
+                    # Log mean embedding activations to see suppression effects clearly
+                    fused_embed = fusion_artifacts.fused_embeddings[i]
+                    base_embed = fusion_artifacts.image_embeddings[i]
+                    embed_diff = (fused_embed - base_embed).abs().mean(dim=0)
+                    embed_diff_np = embed_diff.detach().cpu().numpy()
+                    embed_diff_u8 = ((embed_diff_np - embed_diff_np.min()) / (embed_diff_np.max() - embed_diff_np.min() + 1e-8) * 255).astype(np.uint8)
+                    save_gray(os.path.join(sample_dir, "72_embedding_impact_map.png"), embed_diff_u8)
+                    
                 except Exception as e:
                     save_text(os.path.join(sample_dir, "70_fusion_artifacts_error.txt"), str(e))
 

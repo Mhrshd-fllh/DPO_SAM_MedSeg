@@ -7,13 +7,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from core.types import VisualPrompts
-from models.fusion_cam_encoder import CAMEncoderFusion, FusionArtifacts
-
-
-from dataclasses import dataclass
-from typing import Optional
-import torch
+# Import the new learnable module instead of the old static one
+from models.red_mask_fuser import RedMaskSpatialFuser
 from models.fusion_cam_encoder import FusionArtifacts
+
 
 @dataclass
 class DualMaskOutputs:
@@ -22,30 +19,32 @@ class DualMaskOutputs:
     combined_mask_logits: torch.Tensor   # [B,1,H,W]
     fusion_artifacts: Optional[FusionArtifacts]
 
+
 class KonwerSAM2DFused(nn.Module):
     """
-    Runs SAM-Med2D twice:
-      1) baseline
-      2) fused: image_embeddings gated by CAM saliency before mask decoder
+    Runs SAM-Med2D with two parallel branches:
+      1) Baseline branch: Standard SAM execution.
+      2) Red-Mask Convolutional Fused branch: Dynamic spatial gating and feature injection
+         using the coarse BiomedCLIP CAM masks to suppress false positives.
     """
 
-    def __init__(self, sam, fusion: CAMEncoderFusion, lambda_logits: float = 0.5):
+    def __init__(self, sam, lambda_logits: float = 0.5):
         super().__init__()
         self.sam = sam
-        self.fusion = fusion
         self.lambda_logits = float(lambda_logits)
+        
+        # 🚀 Injecting the learnable convolutional fuser (channel dimension = 256)
+        self.red_mask_fuser = RedMaskSpatialFuser(embed_dim=256)
 
     @torch.no_grad()
     def _encode_prompts(self, visual_prompts: VisualPrompts):
         """
         Returns (sparse_embeddings, dense_embeddings)
-        This assumes SAM-like prompt_encoder signature.
+        Extracts point and box coordinates from visual prompt bundles.
         """
-        # point/box tensors expected by SAM:
         points = (visual_prompts.points_xy, visual_prompts.points_labels)
         boxes = visual_prompts.boxes_xyxy
 
-        # Some forks accept boxes=None; keep robust:
         sparse_embeddings, dense_embeddings = self.sam.prompt_encoder(
             points=points,
             boxes=boxes,
@@ -55,18 +54,19 @@ class KonwerSAM2DFused(nn.Module):
 
     def forward(self, images: torch.Tensor, visual_prompts: VisualPrompts) -> DualMaskOutputs:
         """
-        images: [B,3,H,W] float
-        visual_prompts: contains prompts + artifacts (cam saliency in artifacts)
+        Args:
+            images: [B,3,H,W] float image tensors
+            visual_prompts: Bundle containing prompts and artifacts (saliency masks inside)
         """
         B, _, H, W = images.shape
 
-        # ----- image encoder -----
-        image_embeddings = self.sam.image_encoder(images)  # [B,C,He,We]
-
-        # ----- prompt encoder -----
+        # ----- 1. Image & Prompt Encoding -----
+        image_embeddings = self.sam.image_encoder(images)  # [B, 256, He, We]
+        He, We = image_embeddings.shape[-2:]
+        
         sparse_embeddings, dense_embeddings = self._encode_prompts(visual_prompts)
 
-        # ----- baseline mask decoder -----
+        # ----- 2. Baseline Mask Decoder Branch -----
         low_res_masks_base, iou_preds_base = self.sam.mask_decoder(
             image_embeddings=image_embeddings,
             image_pe=self.sam.prompt_encoder.get_dense_pe(),
@@ -74,29 +74,32 @@ class KonwerSAM2DFused(nn.Module):
             dense_prompt_embeddings=dense_embeddings,
             multimask_output=False,
         )
-        # low_res_masks: [B,1,h',w'] -> upsample to H,W
         baseline_logits = F.interpolate(low_res_masks_base, size=(H, W), mode="bilinear", align_corners=False)
 
-        # ----- fused branch -----
+        # ----- 3. Red-Mask Fused Branch (Our Innovation) -----
         fusion_artifacts = None
-        fused_logits = baseline_logits  # fallback
+        fused_logits = baseline_logits  # Fallback option if saliency is missing
 
-        # extract saliency from visual_prompts artifacts if present
+        # Extract coarse CAM mask (saliency) from visual_prompts artifacts safely
         saliency = None
         if getattr(visual_prompts, "artifacts", None) is not None:
             tens = visual_prompts.artifacts.tensors
-            # in your pipeline the key is "saliency" (np [B,H,W])
             if "saliency" in tens:
                 sal = tens["saliency"]
                 if isinstance(sal, torch.Tensor):
                     saliency = sal
                 else:
-                    # numpy -> torch
                     saliency = torch.from_numpy(sal).to(images.device)
 
+        # Execute our custom learnable spatial fusion block
         if saliency is not None:
-            fused_embeddings, fusion_artifacts = self.fusion(image_embeddings, saliency)
+            # Step A: Pass coarse mask through convolutional fuser to get weights and gating maps
+            mask_feat, spatial_gate = self.red_mask_fuser(saliency, (He, We))
+            
+            # Step B: Apply Hadamard multiplication (gating) and add residual edge features
+            fused_embeddings = (image_embeddings * spatial_gate) + mask_feat
 
+            # Step C: Run mask decoder using the newly enriched features
             low_res_masks_fused, iou_preds_fused = self.sam.mask_decoder(
                 image_embeddings=fused_embeddings,
                 image_pe=self.sam.prompt_encoder.get_dense_pe(),
@@ -106,6 +109,21 @@ class KonwerSAM2DFused(nn.Module):
             )
             fused_logits = F.interpolate(low_res_masks_fused, size=(H, W), mode="bilinear", align_corners=False)
 
+            # Keep the training artifacts logged so MLflow/Loss tracking doesn't break
+            if saliency.dim() == 3:
+                sal_hw = saliency.unsqueeze(1)
+            else:
+                sal_hw = saliency
+                
+            fusion_artifacts = FusionArtifacts(
+                saliency_hw=sal_hw.float().clamp(0.0, 1.0),
+                saliency_e=F.interpolate(sal_hw.float(), size=(He, We), mode="bilinear", align_corners=False).clamp(0.0, 1.0),
+                gate=spatial_gate,
+                image_embeddings=image_embeddings,
+                fused_embeddings=fused_embeddings,
+            )
+
+        # ----- 4. Logits Combination -----
         lam = self.lambda_logits
         combined_logits = (1.0 - lam) * baseline_logits + lam * fused_logits
 
