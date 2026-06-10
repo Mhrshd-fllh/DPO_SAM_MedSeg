@@ -16,8 +16,7 @@ from data.collate import collate_samples
 from models.load_sam_med2d import load_sam_model
 from models.konwer_sam2d import KonwerSAM2D
 
-# Fused model components
-from models.fusion_cam_encoder import CAMEncoderFusion
+# ✅ Fixed: Removed CAMEncoderFusion import since we transitioned to the clean learnable module
 from models.konwer_sam2d_fuser import KonwerSAM2DFused
 
 from prompts.visual.gt_visual_prompts import build_visual_prompts_from_gt_masks
@@ -116,9 +115,6 @@ def main():
     prompt_source = cfg.get("train", {}).get("prompt_source", "gt")
     fusion_cfg = cfg.get("fusion", {})
     fusion_enabled = bool(fusion_cfg.get("enabled", True))
-    fusion_mode = str(fusion_cfg.get("mode", "residual_mul"))
-    fusion_alpha = float(fusion_cfg.get("alpha", 1.0))
-    fusion_beta = float(fusion_cfg.get("beta", 0.5))
     lambda_logits = float(fusion_cfg.get("lambda_logits", 0.5))
 
     # Setup Dataset
@@ -150,10 +146,9 @@ def main():
         strict=bool(cfg["sam"].get("strict", False)),
     )
 
-    # Load architecture variant block
+    # ✅ Fixed: Correctly instantiating KonwerSAM2DFused without the legacy explicit fusion_mod block
     if fusion_enabled:
-        fusion_mod = CAMEncoderFusion(mode=fusion_mode, alpha=fusion_alpha, beta=fusion_beta)
-        model = KonwerSAM2DFused(sam, fusion=fusion_mod, lambda_logits=lambda_logits).to(device).eval()
+        model = KonwerSAM2DFused(sam, lambda_logits=lambda_logits).to(device).eval()
     else:
         text_fusion_mode = cfg["train"].get("text_fusion_mode", "concat")
         model = KonwerSAM2D(sam, text_encoder=text_encoder, fusion_mode=text_fusion_mode).to(device).eval()
@@ -241,9 +236,7 @@ def main():
         metrics_summary["fused"] = calculate_final_metrics(counts["fused"]["tp"], counts["fused"]["fp"], counts["fused"]["fn"])
         metrics_summary["combined"] = calculate_final_metrics(counts["comb"]["tp"], counts["comb"]["fp"], counts["comb"]["fn"])
         metrics_summary["fusion_configuration"] = {
-            "mode": fusion_mode,
-            "alpha": fusion_alpha,
-            "beta": fusion_beta,
+            "fuser_type": "LearnableRedMaskSpatialFuser",
             "lambda_logits": lambda_logits
         }
 
@@ -277,7 +270,7 @@ def main():
         report_lines.append(f"[FUSED BRANCH]    Dice: {f_m['dice']:.4f}  | IoU: {f_m['iou']:.4f}  | Precision: {f_m['precision']:.4f}  | Recall: {f_m['recall']:.4f}")
         report_lines.append(f"[COMBINED OUTPUT] Dice: {c_m['dice']:.4f}  | IoU: {c_m['iou']:.4f}  | Precision: {c_m['precision']:.4f}  | Recall: {c_m['recall']:.4f}")
         report_lines.append("--------------------------------------------------")
-        report_lines.append(f"Gating Configuration Parameters: Mode={fusion_mode}, Alpha={fusion_alpha}, Lambda={lambda_logits}")
+        report_lines.append(f"Gating Configuration Parameters: Fuser=LearnableRedMaskSpatialFuser, Lambda_Logits={lambda_logits}")
     
     report_lines.append("==================================================")
     
