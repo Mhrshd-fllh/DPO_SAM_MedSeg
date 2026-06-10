@@ -293,8 +293,14 @@ def main():
 
     # Initialize text prompt components matching train loop setup
     text_cfg = TextPromptConfig(
+        question_template=cfg["prompts"]["text"].get("question_template", "Question: {}, Answer is:"),
+        question=cfg["prompts"]["text"].get(
+            "question",
+            "What is the shape of breast tumor and where is it located?",
+        ),
         vqa_enabled=bool(cfg["prompts"]["text"].get("vqa_enabled", True)),
         gpt_enabled=bool(cfg["prompts"]["text"].get("gpt_enabled", False)),
+        vqa_model_id=cfg["prompts"]["text"].get("vqa_model_id", "Salesforce/blip-vqa-base"),
         gpt_model=cfg["prompts"]["text"].get("gpt_model", "gpt-4o-mini"),
     )
     text_pipeline = TextPromptPipeline(text_cfg, device=device)
@@ -392,13 +398,31 @@ def main():
         save_array_npy(os.path.join(sample_dir, "prompt_points.npy"), pts_np)
         save_array_npy(os.path.join(sample_dir, "prompt_point_labels.npy"), lbl_np)
 
-        # Retrieve text prompt logs if present
-        current_text_prompt = tp_data[i] if isinstance(tp_data, list) and i < len(tp_data) else str(tp_data)
+        # Retrieve per-sample text prompt logs.
+        current_text_prompt = tp_data.text[i] if i < len(tp_data.text) else ""
+        current_vqa_answer = (
+            tp_data.vqa_answers[i]
+            if tp_data.vqa_answers is not None and i < len(tp_data.vqa_answers)
+            else ""
+        )
+        current_gpt_description = (
+            tp_data.gpt_descriptions[i]
+            if tp_data.gpt_descriptions is not None and i < len(tp_data.gpt_descriptions)
+            else ""
+        )
+        current_text_label = (
+            tp_data.labels[i]
+            if tp_data.labels is not None and i < len(tp_data.labels)
+            else ""
+        )
 
         prompt_txt = "\n".join(
             [
                 f"prompt_source: {prompt_source}",
                 f"class_text: {class_text}",
+                f"text_label: {current_text_label}",
+                f"vqa_answer: {current_vqa_answer}",
+                f"gpt_description: {current_gpt_description}",
                 f"text_prompt_string: {current_text_prompt}",
                 f"box_xyxy: {box_np.tolist()}",
                 f"points_xy: {pts_np.tolist()}",
@@ -516,6 +540,9 @@ def main():
             "filename": fn,
             "prompt_source": prompt_source,
             "class_text": class_text,
+            "text_label": current_text_label,
+            "vqa_answer": current_vqa_answer,
+            "gpt_description": current_gpt_description,
             "text_prompt_string": str(current_text_prompt),
             "image": tensor_stats(images[i]),
             "gt": tensor_stats(masks[i]),
@@ -552,6 +579,9 @@ def main():
             f"filename: {fn}",
             f"prompt_source: {prompt_source}",
             f"class_text: {class_text}",
+            f"text_label: {current_text_label}",
+            f"vqa_answer: {current_vqa_answer}",
+            f"gpt_description: {current_gpt_description}",
             f"text_prompt: {current_text_prompt}",
             "",
             "== Shapes ==",

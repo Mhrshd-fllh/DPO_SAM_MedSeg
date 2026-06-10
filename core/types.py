@@ -18,6 +18,9 @@ class VisualPrompts:
 @dataclass(frozen=True)
 class TextPrompts:
     text: List[str]
+    vqa_answers: Optional[List[str]] = None
+    gpt_descriptions: Optional[List[str]] = None
+    labels: Optional[List[str]] = None
 
 @dataclass(frozen=True)
 class PromptBundle:
