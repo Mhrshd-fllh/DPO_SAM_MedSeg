@@ -46,7 +46,7 @@ class HFVQAAdapter:
         self.torch_dtype = torch_dtype
 
         self.pipe = pipeline(
-            task="visual-question-answering",
+            task="image-text-to-text",
             model=model_id,
             device=device_idx,
         )
@@ -75,7 +75,7 @@ class HFVQAAdapter:
                 x = x.byte().permute(1, 2, 0).numpy()
                 img = Image.fromarray(x)
 
-            out = self.pipe(image=img, question=q)
+            out = self.pipe(images=img, text=q)
             # HF returns either dict or list[dict]
             if isinstance(out, list):
                 out = out[0]
