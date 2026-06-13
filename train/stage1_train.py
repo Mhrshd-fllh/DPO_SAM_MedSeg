@@ -80,6 +80,10 @@ def main():
         gpt_model=cfg["prompts"]["text"].get("gpt_model", "gpt-4o-mini"),
     )
     text_pipeline = TextPromptPipeline(text_cfg, device=device)
+    gpt_descriptions_by_label = text_pipeline.precompute_gpt_descriptions(
+        list(getattr(train_loader.dataset, "labels", []))
+        + list(getattr(test_loader.dataset, "labels", []))
+    )
 
     # Load BiomedCLIP for text encoding
     clip_model, _, tokenizer = load_biomedclip(device=device)
@@ -153,7 +157,7 @@ def main():
         for batch in train_loader:
             images = batch.image.to(device)
             masks = batch.mask.to(device)
-            labels = getattr(batch, "label", None)
+            labels = batch.label
 
             if prompt_source == "gt":
                 vp = build_visual_prompts_from_gt_masks(
@@ -166,7 +170,11 @@ def main():
                 vp = cam_pipeline(images, class_texts)
 
             # Generate text prompts
-            tp = text_pipeline(images, labels=labels)
+            tp = text_pipeline(
+                images,
+                labels=labels,
+                gpt_descriptions_by_label=gpt_descriptions_by_label,
+            )
 
             opt.zero_grad(set_to_none=True)
 
@@ -197,7 +205,7 @@ def main():
             for batch in test_loader:
                 images = batch.image.to(device)
                 masks = batch.mask.to(device)
-                labels = getattr(batch, "label", None)
+                labels = batch.label
 
                 if prompt_source == "gt":
                     vp = build_visual_prompts_from_gt_masks(
@@ -209,7 +217,11 @@ def main():
                     class_texts = [class_text] * images.shape[0]
                     vp = cam_pipeline(images, class_texts)
 
-                tp = text_pipeline(images, labels=labels)
+                tp = text_pipeline(
+                    images,
+                    labels=labels,
+                    gpt_descriptions_by_label=gpt_descriptions_by_label,
+                )
 
                 if use_visual_fuser:
                     out = model(images, visual_prompts=vp)

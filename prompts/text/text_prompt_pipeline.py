@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Any
+from typing import Dict, Iterable, List, Optional, Any
 
 import torch
 from PIL import Image
@@ -62,7 +62,27 @@ class TextPromptPipeline:
         if cfg.gpt_enabled:
             self.gpt = OpenAIGPTAdapter(model=cfg.gpt_model)
 
-    def __call__(self, images: torch.Tensor, labels: Optional[List[str]] = None) -> TextPrompts:
+    def precompute_gpt_descriptions(self, labels: Iterable[str]) -> Dict[str, str]:
+        """
+        Build one GPT description per class/label. Call this once before a
+        training or evaluation loop, then pass the returned map to __call__.
+        """
+        unique_labels = sorted({str(label) for label in labels})
+        if not self.cfg.gpt_enabled or self.gpt is None or not unique_labels:
+            return {}
+
+        gpt_res = self.gpt.describe(unique_labels)
+        return {
+            label: desc.strip()
+            for label, desc in zip(unique_labels, gpt_res.descriptions)
+        }
+
+    def __call__(
+        self,
+        images: torch.Tensor,
+        labels: Optional[List[str]] = None,
+        gpt_descriptions_by_label: Optional[Dict[str, str]] = None,
+    ) -> TextPrompts:
         """
         images: [B,3,H,W] float in [0,1]
         labels: optional list[str] length B (used by GPT)
@@ -86,11 +106,14 @@ class TextPromptPipeline:
             vqa_res = self.vqa.infer(images=pil_images, questions=questions)
             vqa_answers = [a.strip() for a in vqa_res.answers]
 
-        # GPT
+        # GPT: class-level descriptions are expected to be precomputed once.
         gpt_descs = [""] * B
         if self.cfg.gpt_enabled:
-            gpt_res = self.gpt.describe(label_list)
-            gpt_descs = [d.strip() for d in gpt_res.descriptions]
+            if gpt_descriptions_by_label is not None:
+                gpt_descs = [gpt_descriptions_by_label.get(label, "") for label in label_list]
+            else:
+                gpt_res = self.gpt.describe(label_list)
+                gpt_descs = [d.strip() for d in gpt_res.descriptions]
 
         # Concatenate
         out_text: List[str] = []
