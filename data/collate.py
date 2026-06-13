@@ -9,6 +9,7 @@ class Batch:
     image: torch.Tensor   # [B,3,H,W]
     mask: torch.Tensor    # [B,1,H,W]
     meta: Dict[str, List[Any]]
+    label: List[str]
 
 
 def collate_samples(samples) -> Batch:
@@ -21,4 +22,6 @@ def collate_samples(samples) -> Batch:
         for k, v in s.meta.items():
             meta.setdefault(k, []).append(v)
 
-    return Batch(image=images, mask=masks, meta=meta)
+    labels = [str(x) for x in meta.get("label", ["unknown"] * len(samples))]
+
+    return Batch(image=images, mask=masks, meta=meta, label=labels)

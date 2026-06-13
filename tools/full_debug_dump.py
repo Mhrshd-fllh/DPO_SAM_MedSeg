@@ -288,7 +288,7 @@ def main():
 
     images = batch.image.to(device)  # [B,3,H,W]
     masks = batch.mask.to(device)   # [B,1,H,W]
-    labels = getattr(batch, "label", None)
+    labels = batch.label
     B, _, H, W = images.shape
 
     # Initialize text prompt components matching train loop setup
@@ -304,6 +304,9 @@ def main():
         gpt_model=cfg["prompts"]["text"].get("gpt_model", "gpt-4o-mini"),
     )
     text_pipeline = TextPromptPipeline(text_cfg, device=device)
+    gpt_descriptions_by_label = text_pipeline.precompute_gpt_descriptions(
+        getattr(ds, "labels", [])
+    )
     clip_model_t, _, tokenizer_t = load_biomedclip(device=device)
     text_encoder = TextEncoderAdapter(model=clip_model_t, tokenizer=tokenizer_t, device=device)
 
@@ -348,7 +351,11 @@ def main():
             artifacts_per_sample = cam_pipeline.artifacts
 
     # Generate multi-modal text token maps
-    tp_data = text_pipeline(images, labels=labels)
+    tp_data = text_pipeline(
+        images,
+        labels=labels,
+        gpt_descriptions_by_label=gpt_descriptions_by_label,
+    )
 
     # Forward routing to capture proper outputs depending on variant class
     if fusion_enabled:

@@ -33,6 +33,7 @@ class BUSIDataset(Dataset):
 
         self.img_paths = sorted(glob(os.path.join(img_dir, "*.png")))
         assert len(self.img_paths) > 0, f"No images found in {img_dir}"
+        self.labels = [self._infer_label(path) for path in self.img_paths]
 
         # masks are expected to match filenames
         self.msk_dir = msk_dir
@@ -46,6 +47,18 @@ class BUSIDataset(Dataset):
     def _load_mask(self, path: str) -> Image.Image:
         # masks are binary-ish png; keep as L
         return Image.open(path).convert("L")
+
+    def _infer_label(self, image_path: str) -> str:
+        """
+        BUSI filenames commonly include one of: normal, benign, malignant.
+        Also support class subdirectories if the dataset is reorganized later.
+        """
+        parts = [p.lower() for p in os.path.normpath(image_path).split(os.sep)]
+        name = os.path.basename(image_path).lower()
+        for label in ("normal", "benign", "malignant"):
+            if label in name or label in parts:
+                return label
+        return "unknown"
 
     def __getitem__(self, idx: int) -> Sample:
         ip = self.img_paths[idx]
@@ -63,5 +76,5 @@ class BUSIDataset(Dataset):
         img_t = torch.from_numpy(img_np).permute(2, 0, 1).float() / 255.0  # [3,H,W]
         msk_t = (torch.from_numpy(msk_np) > 0).float().unsqueeze(0)        # [1,H,W]
 
-        meta = {"filename": fn}
+        meta = {"filename": fn, "label": self.labels[idx]}
         return Sample(image=img_t, mask=msk_t, meta=meta)

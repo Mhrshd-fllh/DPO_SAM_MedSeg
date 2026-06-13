@@ -140,6 +140,9 @@ def main():
         gpt_model=cfg["prompts"]["text"].get("gpt_model", "gpt-4o-mini"),
     )
     text_pipeline = TextPromptPipeline(text_cfg, device=device)
+    gpt_descriptions_by_label = text_pipeline.precompute_gpt_descriptions(
+        getattr(ds, "labels", [])
+    )
     clip_model_t, _, tokenizer_t = load_biomedclip(device=device)
     text_encoder = TextEncoderAdapter(model=clip_model_t, tokenizer=tokenizer_t, device=device)
 
@@ -185,7 +188,7 @@ def main():
     for batch in tqdm(loader, desc="Evaluating Dataset"):
         images = batch.image.to(device)  # [B, 3, H, W]
         masks = batch.mask.to(device)   # [B, 1, H, W]
-        labels = getattr(batch, "label", None)
+        labels = batch.label
         B = images.shape[0]
 
         # Resolve Visual Prompts
@@ -200,7 +203,11 @@ def main():
             visual_prompts = cam_pipeline(images, class_texts)
 
         # Resolve Text Prompts
-        tp_data = text_pipeline(images, labels=labels)
+        tp_data = text_pipeline(
+            images,
+            labels=labels,
+            gpt_descriptions_by_label=gpt_descriptions_by_label,
+        )
 
         # Model Routing & Forward Execution
         if fusion_enabled:
