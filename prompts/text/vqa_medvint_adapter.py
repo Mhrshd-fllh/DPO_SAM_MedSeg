@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 import torch
 from PIL import Image
@@ -11,6 +11,7 @@ from PIL import Image
 class VQAResult:
     answers: List[str]
     scores: Optional[List[float]] = None
+    raw_outputs: Optional[List[Any]] = None
 
 
 class HFVQAAdapter:
@@ -51,6 +52,39 @@ class HFVQAAdapter:
             device=device_idx,
         )
 
+    @staticmethod
+    def _extract_answer(out: Any) -> tuple[str, float]:
+        """
+        Different HF VQA/image-text pipelines return different keys.
+        BLIP VQA with image-text-to-text commonly returns generated_text,
+        while visual-question-answering returns answer/score.
+        """
+        if isinstance(out, list):
+            if len(out) == 0:
+                return "", 0.0
+            out = out[0]
+
+        if isinstance(out, str):
+            return out.strip(), 0.0
+
+        if not isinstance(out, dict):
+            return str(out).strip(), 0.0
+
+        answer = ""
+        for key in ("answer", "generated_text", "text", "caption"):
+            value = out.get(key)
+            if value is not None:
+                answer = str(value).strip()
+                break
+
+        score_value = out.get("score", 0.0)
+        try:
+            score = float(score_value)
+        except (TypeError, ValueError):
+            score = 0.0
+
+        return answer, score
+
     def infer(self, images: List[Union[Image.Image, torch.Tensor]], questions: List[str]) -> VQAResult:
         """
         images: list of PIL.Image (recommended). torch.Tensor can be converted externally if needed.
@@ -61,6 +95,7 @@ class HFVQAAdapter:
 
         answers: List[str] = []
         scores: List[float] = []
+        raw_outputs: List[Any] = []
 
         for img, q in zip(images, questions):
             if isinstance(img, torch.Tensor):
@@ -76,12 +111,9 @@ class HFVQAAdapter:
                 img = Image.fromarray(x)
 
             out = self.pipe(images=img, text=q)
-            # HF returns either dict or list[dict]
-            if isinstance(out, list):
-                out = out[0]
-            ans = str(out.get("answer", "")).strip()
-            sc = float(out.get("score", 0.0))
+            raw_outputs.append(out)
+            ans, sc = self._extract_answer(out)
             answers.append(ans)
             scores.append(sc)
 
-        return VQAResult(answers=answers, scores=scores)
+        return VQAResult(answers=answers, scores=scores, raw_outputs=raw_outputs)

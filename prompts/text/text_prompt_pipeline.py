@@ -101,10 +101,13 @@ class TextPromptPipeline:
 
         # VQA
         vqa_answers = [""] * B
+        vqa_raw_outputs = [None] * B
         if self.cfg.vqa_enabled:
             pil_images = _to_pil_list(images)
             vqa_res = self.vqa.infer(images=pil_images, questions=questions)
             vqa_answers = [a.strip() for a in vqa_res.answers]
+            if vqa_res.raw_outputs is not None:
+                vqa_raw_outputs = vqa_res.raw_outputs
 
         # GPT: class-level descriptions are expected to be precomputed once.
         gpt_descs = [""] * B
@@ -133,6 +136,7 @@ class TextPromptPipeline:
         return TextPrompts(
             text=out_text,
             vqa_answers=vqa_answers,
+            vqa_raw_outputs=vqa_raw_outputs,
             gpt_descriptions=gpt_descs,
             labels=label_list,
         )
