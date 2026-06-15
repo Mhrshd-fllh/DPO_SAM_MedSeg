@@ -7,7 +7,7 @@ import torch
 from PIL import Image
 
 from core.types import TextPrompts
-from prompts.text.vqa_medvint_adapter import HFVQAAdapter
+from prompts.text.vqa_medvint_adapter import MedVInTAdapter
 from prompts.text.gpt4_adapter import OpenAIGPTAdapter
 
 
@@ -57,7 +57,7 @@ class TextPromptPipeline:
         self.gpt = None
 
         if cfg.vqa_enabled:
-            self.vqa = HFVQAAdapter(model_id=cfg.vqa_model_id, device=device)
+            self.vqa = MedVInTAdapter(model_id=cfg.vqa_model_id, device=device)
 
         if cfg.gpt_enabled:
             self.gpt = OpenAIGPTAdapter(model=cfg.gpt_model)
@@ -101,10 +101,13 @@ class TextPromptPipeline:
 
         # VQA
         vqa_answers = [""] * B
+        vqa_raw_outputs = [None] * B
         if self.cfg.vqa_enabled:
             pil_images = _to_pil_list(images)
             vqa_res = self.vqa.infer(images=pil_images, questions=questions)
             vqa_answers = [a.strip() for a in vqa_res.answers]
+            if vqa_res.raw_outputs is not None:
+                vqa_raw_outputs = vqa_res.raw_outputs
 
         # GPT: class-level descriptions are expected to be precomputed once.
         gpt_descs = [""] * B
@@ -133,6 +136,7 @@ class TextPromptPipeline:
         return TextPrompts(
             text=out_text,
             vqa_answers=vqa_answers,
+            vqa_raw_outputs=vqa_raw_outputs,
             gpt_descriptions=gpt_descs,
             labels=label_list,
         )

@@ -417,6 +417,11 @@ def main():
             if tp_data.gpt_descriptions is not None and i < len(tp_data.gpt_descriptions)
             else ""
         )
+        current_vqa_raw_output = (
+            tp_data.vqa_raw_outputs[i]
+            if tp_data.vqa_raw_outputs is not None and i < len(tp_data.vqa_raw_outputs)
+            else None
+        )
         current_text_label = (
             tp_data.labels[i]
             if tp_data.labels is not None and i < len(tp_data.labels)
@@ -429,6 +434,7 @@ def main():
                 f"class_text: {class_text}",
                 f"text_label: {current_text_label}",
                 f"vqa_answer: {current_vqa_answer}",
+                f"vqa_raw_output: {current_vqa_raw_output}",
                 f"gpt_description: {current_gpt_description}",
                 f"text_prompt_string: {current_text_prompt}",
                 f"box_xyxy: {box_np.tolist()}",
@@ -549,6 +555,7 @@ def main():
             "class_text": class_text,
             "text_label": current_text_label,
             "vqa_answer": current_vqa_answer,
+            "vqa_raw_output": current_vqa_raw_output,
             "gpt_description": current_gpt_description,
             "text_prompt_string": str(current_text_prompt),
             "image": tensor_stats(images[i]),
@@ -588,6 +595,7 @@ def main():
             f"class_text: {class_text}",
             f"text_label: {current_text_label}",
             f"vqa_answer: {current_vqa_answer}",
+            f"vqa_raw_output: {current_vqa_raw_output}",
             f"gpt_description: {current_gpt_description}",
             f"text_prompt: {current_text_prompt}",
             "",

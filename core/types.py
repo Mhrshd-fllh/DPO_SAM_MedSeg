@@ -19,6 +19,7 @@ class VisualPrompts:
 class TextPrompts:
     text: List[str]
     vqa_answers: Optional[List[str]] = None
+    vqa_raw_outputs: Optional[List[Any]] = None
     gpt_descriptions: Optional[List[str]] = None
     labels: Optional[List[str]] = None
 
