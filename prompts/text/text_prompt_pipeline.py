@@ -7,7 +7,7 @@ import torch
 from PIL import Image
 
 from core.types import TextPrompts
-from prompts.text.vqa_medvint_adapter import HFVQAAdapter
+from prompts.text.vqa_medvint_adapter import MedVInTAdapter
 from prompts.text.gpt4_adapter import OpenAIGPTAdapter
 
 
@@ -57,7 +57,7 @@ class TextPromptPipeline:
         self.gpt = None
 
         if cfg.vqa_enabled:
-            self.vqa = HFVQAAdapter(model_id=cfg.vqa_model_id, device=device)
+            self.vqa = MedVInTAdapter(model_id=cfg.vqa_model_id, device=device)
 
         if cfg.gpt_enabled:
             self.gpt = OpenAIGPTAdapter(model=cfg.gpt_model)

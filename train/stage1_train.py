@@ -4,6 +4,7 @@ import argparse
 import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import StepLR
+from tqdm import tqdm
 
 from core.config import load_config
 from data.dataloader import build_busi_loaders
@@ -154,7 +155,7 @@ def main():
         model.train()
         total_loss = 0.0
 
-        for batch in train_loader:
+        for batch in tqdm(train_loader, desc=f"Epoch {ep:02d} [Train]", leave=False):
             images = batch.image.to(device)
             masks = batch.mask.to(device)
             labels = batch.label
@@ -202,7 +203,7 @@ def main():
         model.eval()
         dices = []
         with torch.no_grad():
-            for batch in test_loader:
+            for batch in tqdm(test_loader, desc=f"Epoch {ep:02d} [Eval]", leave=False):
                 images = batch.image.to(device)
                 masks = batch.mask.to(device)
                 labels = batch.label

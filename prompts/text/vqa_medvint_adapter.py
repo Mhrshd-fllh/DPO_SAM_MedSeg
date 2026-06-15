@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, List, Optional, Union
+from typing import List, Optional, Union
 
 import torch
 from PIL import Image
@@ -11,109 +11,116 @@ from PIL import Image
 class VQAResult:
     answers: List[str]
     scores: Optional[List[float]] = None
-    raw_outputs: Optional[List[Any]] = None
 
 
-class HFVQAAdapter:
+class MedVInTAdapter:
     """
-    Real VQA adapter using HuggingFace transformers pipeline("visual-question-answering").
-
-    Default model is a runnable general VQA model. For paper-faithful medical VQA,
-    change `model_id` to your MedVInT/PMC-VQA checkpoint that supports the same task.
+    MedVInT (Medical Visual Instruction Tuned) VQA adapter.
+    
+    Loads a MedVInT model checkpoint and performs medical visual question answering.
+    Uses the official HuggingFace checkpoint: xmcmic/MedVInT-TE
+    
+    Args:
+        model_id: HuggingFace model ID or local checkpoint path
+                 Default: "xmcmic/MedVInT-TE" (official MedVInT checkpoint)
+        device: Device to load model on ("cuda" or "cpu")
+        torch_dtype: Precision for model (float32, float16, bfloat16)
+        max_new_tokens: Max tokens to generate in answer
     """
     def __init__(
         self,
-        model_id: str = "Salesforce/blip-vqa-base",
+        model_id: str = "xmcmic/MedVInT-TE",
         device: Optional[str] = None,
         torch_dtype: Optional[torch.dtype] = None,
+        max_new_tokens: int = 100,
     ):
-        from transformers import pipeline  # transformers<5 recommended
+        from transformers import AutoTokenizer, AutoModelForCausalLM
 
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # HF pipeline uses device index for cuda, -1 for cpu
-        device_idx = 0 if device.startswith("cuda") else -1
-
         self.model_id = model_id
         self.device = device
+        self.max_new_tokens = max_new_tokens
 
-        # dtype handling
         if torch_dtype is None:
-            if device.startswith("cuda"):
-                torch_dtype = torch.float16
-            else:
-                torch_dtype = torch.float32
+            torch_dtype = torch.float16 if device.startswith("cuda") else torch.float32
         self.torch_dtype = torch_dtype
 
-        self.pipe = pipeline(
-            task="image-text-to-text",
-            model=model_id,
-            device=device_idx,
-        )
-
-    @staticmethod
-    def _extract_answer(out: Any) -> tuple[str, float]:
-        """
-        Different HF VQA/image-text pipelines return different keys.
-        BLIP VQA with image-text-to-text commonly returns generated_text,
-        while visual-question-answering returns answer/score.
-        """
-        if isinstance(out, list):
-            if len(out) == 0:
-                return "", 0.0
-            out = out[0]
-
-        if isinstance(out, str):
-            return out.strip(), 0.0
-
-        if not isinstance(out, dict):
-            return str(out).strip(), 0.0
-
-        answer = ""
-        for key in ("answer", "generated_text", "text", "caption"):
-            value = out.get(key)
-            if value is not None:
-                answer = str(value).strip()
-                break
-
-        score_value = out.get("score", 0.0)
         try:
-            score = float(score_value)
-        except (TypeError, ValueError):
-            score = 0.0
+            self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_id,
+                torch_dtype=torch_dtype,
+                device_map=device,
+                trust_remote_code=True,
+            )
+            self.model.eval()
+            
+            # Freeze all model parameters
+            for param in self.model.parameters():
+                param.requires_grad = False
+                
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load MedVInT model from '{model_id}'. "
+                f"Ensure the checkpoint exists and is compatible. Error: {e}"
+            )
 
-        return answer, score
+    def _process_image(self, img: Union[Image.Image, torch.Tensor]) -> Image.Image:
+        """Convert tensor to PIL Image if needed."""
+        if isinstance(img, torch.Tensor):
+            x = img.detach().cpu()
+            if x.dim() != 3:
+                raise ValueError("Tensor image must be CHW")
+            if x.shape[0] == 1:
+                x = x.repeat(3, 1, 1)
+            if x.max() <= 1.0:
+                x = (x * 255.0).clamp(0, 255)
+            x = x.byte().permute(1, 2, 0).numpy()
+            img = Image.fromarray(x)
+        return img
 
     def infer(self, images: List[Union[Image.Image, torch.Tensor]], questions: List[str]) -> VQAResult:
         """
-        images: list of PIL.Image (recommended). torch.Tensor can be converted externally if needed.
-        questions: list[str] length B
+        Generate VQA answers using MedVInT.
+        
+        Args:
+            images: List of PIL Images or torch tensors [C,H,W]
+            questions: List of question strings
+            
+        Returns:
+            VQAResult with answers and scores
         """
         if len(images) != len(questions):
             raise ValueError(f"images and questions must have same length. got {len(images)} vs {len(questions)}")
 
         answers: List[str] = []
         scores: List[float] = []
-        raw_outputs: List[Any] = []
 
-        for img, q in zip(images, questions):
-            if isinstance(img, torch.Tensor):
-                # expect CHW in [0,1] or [0,255]
-                x = img.detach().cpu()
-                if x.dim() != 3:
-                    raise ValueError("Tensor image must be CHW")
-                if x.shape[0] == 1:
-                    x = x.repeat(3, 1, 1)
-                if x.max() <= 1.0:
-                    x = (x * 255.0).clamp(0, 255)
-                x = x.byte().permute(1, 2, 0).numpy()
-                img = Image.fromarray(x)
+        with torch.no_grad():
+            for img, question in zip(images, questions):
+                img = self._process_image(img)
+                
+                prompt = f"<image>\n{question}"
+                
+                inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+                
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=self.max_new_tokens,
+                    do_sample=False,
+                    top_p=0.95,
+                    temperature=0.7,
+                    output_scores=True,
+                    return_dict_in_generate=True,
+                )
+                
+                generated_ids = outputs.sequences[:, inputs.input_ids.shape[1]:]
+                answer = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+                
+                score = 1.0 if answer else 0.0
+                answers.append(answer)
+                scores.append(score)
 
-            out = self.pipe(images=img, text=q)
-            raw_outputs.append(out)
-            ans, sc = self._extract_answer(out)
-            answers.append(ans)
-            scores.append(sc)
-
-        return VQAResult(answers=answers, scores=scores, raw_outputs=raw_outputs)
+        return VQAResult(answers=answers, scores=scores)
