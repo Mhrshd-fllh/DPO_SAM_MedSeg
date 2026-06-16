@@ -22,6 +22,6 @@ prompts:
     vqa_enabled: true
     gpt_enabled: true
 
-    vqa_model_id: "Salesforce/blip-vqa-base"
+    vqa_model_id: "edgeun/blip-medical-vqa-rad"
     gpt_model: "gpt-4o-mini"
 

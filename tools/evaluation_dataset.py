@@ -4,10 +4,10 @@ import os
 import json
 import argparse
 from typing import Any, Dict, List
+from functools import partial  
 
 import torch
 from torch.utils.data import DataLoader
-from tqdm import tqdm
 
 from core.config import load_config
 from data.datasets.busi_dataset import BUSIDataset
@@ -43,9 +43,10 @@ def compute_batch_metrics(pred01: torch.Tensor, gt01: torch.Tensor) -> Dict[str,
     g = (gt01 > 0).float()
     
     # Sum over spatial dimensions [H, W] to keep per-sample counts
-    tp = (p * g).sum(dim=(-2, -1))
-    fp = (p * (1 - g)).sum(dim=(-2, -1))
-    fn = ((1 - p) * g).sum(dim=(-2, -1))
+    # Added flatten() or item-aware sum to ensure output per sample is 1D
+    tp = (p * g).sum(dim=(-2, -1)).view(-1)
+    fp = (p * (1 - g)).sum(dim=(-2, -1)).view(-1)
+    fn = ((1 - p) * g).sum(dim=(-2, -1)).view(-1)
     
     return {"tp": tp, "fp": fp, "fn": fn}
 
@@ -112,6 +113,11 @@ def main():
 
     cfg = load_config(args.config, args.prompts, args.datasets, args.train_cfg)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    import tqdm
+    tqdm.tqdm = partial(tqdm.tqdm, disable=True)
+    
+    from tqdm.auto import tqdm as main_tqdm
 
     prompt_source = cfg.get("train", {}).get("prompt_source", "gt")
     fusion_cfg = cfg.get("fusion", {})
@@ -185,7 +191,9 @@ def main():
     class_text = cfg["prompts"]["visual"].get("class_text", "breast tumor")
 
     print(f"\n[Eval] Commencing evaluation over {len(ds)} items (Split: {args.split})...")
-    for batch in tqdm(loader, desc="Evaluating Dataset"):
+    
+    # Evaluation Loop
+    for batch in main_tqdm(loader, desc="Evaluating Dataset"):
         images = batch.image.to(device)  # [B, 3, H, W]
         masks = batch.mask.to(device)   # [B, 1, H, W]
         labels = batch.label
@@ -235,8 +243,8 @@ def main():
             counts["fused"]["fp"].extend(m_fused["fp"].cpu().tolist())
             counts["fused"]["fn"].extend(m_fused["fn"].cpu().tolist())
 
-            pred_comb = (torch.sigmoid(logits_comb) > 0.5).float()
-            m_comb = compute_batch_metrics(pred_comb, masks)
+            grid_pred_comb = (torch.sigmoid(logits_comb) > 0.5).float()
+            m_comb = compute_batch_metrics(grid_pred_comb, masks)
             counts["comb"]["tp"].extend(m_comb["tp"].cpu().tolist())
             counts["comb"]["fp"].extend(m_comb["fp"].cpu().tolist())
             counts["comb"]["fn"].extend(m_comb["fn"].cpu().tolist())

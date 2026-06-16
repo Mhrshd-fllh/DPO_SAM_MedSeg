@@ -446,18 +446,18 @@ def main():
 
         # Render overlays
         fig = plt.figure(figsize=(W / 100, H / 100), dpi=100)
-        ax = plt.gca()
-        ax.imshow(img_u8)
-        ax.axis("off")
+        grid_ax = plt.gca()
+        grid_ax.imshow(img_u8)
+        grid_ax.axis("off")
         x1, y1, x2, y2 = box_np[0]
         rect = plt.Rectangle((x1, y1), x2 - x1, y2 - y1, fill=False, linewidth=2, color="red")
-        ax.add_patch(rect)
+        grid_ax.add_patch(rect)
         pos = lbl_np > 0
         neg = lbl_np == 0
         if pos.any():
-            ax.scatter(pts_np[pos, 0], pts_np[pos, 1], s=30, marker="o", color="green")
+            grid_ax.scatter(pts_np[pos, 0], pts_np[pos, 1], s=30, marker="o", color="green")
         if neg.any():
-            ax.scatter(pts_np[neg, 0], pts_np[neg, 1], s=30, marker="x", color="blue")
+            grid_ax.scatter(pts_np[neg, 0], pts_np[neg, 1], s=30, marker="x", color="blue")
         fig.tight_layout(pad=0)
         fig.canvas.draw()
         
@@ -548,6 +548,13 @@ def main():
                 except Exception as e:
                     save_text(os.path.join(sample_dir, "70_fusion_artifacts_error.txt"), str(e))
 
+        # ✅ ایمن‌سازی متغیر خروجی خام VQA برای سریالایز شدن در ساختار داده JSON
+        vqa_raw_serializable = current_vqa_raw_output
+        if isinstance(current_vqa_raw_output, torch.Tensor):
+            vqa_raw_serializable = current_vqa_raw_output.detach().cpu().numpy().tolist()
+        elif isinstance(current_vqa_raw_output, np.ndarray):
+            vqa_raw_serializable = current_vqa_raw_output.tolist()
+
         # Generate summary mapping dictionaries
         summary: Dict[str, Any] = {
             "filename": fn,
@@ -555,7 +562,7 @@ def main():
             "class_text": class_text,
             "text_label": current_text_label,
             "vqa_answer": current_vqa_answer,
-            "vqa_raw_output": current_vqa_raw_output,
+            "vqa_raw_output": vqa_raw_serializable,  # 👈 حالا با خیال راحت ذخیره می‌شود
             "gpt_description": current_gpt_description,
             "text_prompt_string": str(current_text_prompt),
             "image": tensor_stats(images[i]),
@@ -595,7 +602,7 @@ def main():
             f"class_text: {class_text}",
             f"text_label: {current_text_label}",
             f"vqa_answer: {current_vqa_answer}",
-            f"vqa_raw_output: {current_vqa_raw_output}",
+            f"vqa_raw_output: {vqa_raw_serializable}",
             f"gpt_description: {current_gpt_description}",
             f"text_prompt: {current_text_prompt}",
             "",

@@ -4,7 +4,7 @@ import argparse
 import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import StepLR
-from tqdm import tqdm
+from functools import partial
 
 from core.config import load_config
 from data.dataloader import build_busi_loaders
@@ -65,6 +65,13 @@ def main():
 
     cfg = load_config(args.config, args.prompts, args.datasets, args.train_cfg)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # 🛠️ ترفند غیرفعال‌سازی هوشمند لوپ‌های فرعی و نویزپراکن دیتابیس یا مدل‌ها
+    import tqdm
+    tqdm.tqdm = partial(tqdm.tqdm, disable=True)
+    
+    # فعال کردن لوپ اصلی و بومی برای محیط کار شما (سازگار با سرور و کولب)
+    from tqdm.auto import tqdm as main_tqdm
 
     train_loader, test_loader = build_busi_loaders(cfg)
 
@@ -155,7 +162,8 @@ def main():
         model.train()
         total_loss = 0.0
 
-        for batch in tqdm(train_loader, desc=f"Epoch {ep:02d} [Train]", leave=False):
+        # ✅ استفاده از لوپ اصلی فیلتر شده بدون شکستگی لاگ
+        for batch in main_tqdm(train_loader, desc=f"Epoch {ep:02d} [Train]", leave=False):
             images = batch.image.to(device)
             masks = batch.mask.to(device)
             labels = batch.label
@@ -181,16 +189,11 @@ def main():
 
             # 🔥 DYNAMIC FORWARD & LOSS COMPUTATION BLOCK
             if use_visual_fuser:
-                # KonwerSAM2DFused pass
                 out = model(images, visual_prompts=vp)
-                # Compute loss directly on the combined prediction map
                 loss = crit(out.combined_mask_logits, masks)
-                pred_logits = out.combined_mask_logits
             else:
-                # KonwerSAM2D text variant pass
                 out = model(images, vp=vp, tp=tp)
                 loss = crit(out.mask_logits, masks)
-                pred_logits = out.mask_logits
 
             loss.backward()
             opt.step()
@@ -203,7 +206,8 @@ def main():
         model.eval()
         dices = []
         with torch.no_grad():
-            for batch in tqdm(test_loader, desc=f"Epoch {ep:02d} [Eval]", leave=False):
+            # ✅ استفاده از لوپ ارزیابی فیلتر شده بدون شکستگی لاگ
+            for batch in main_tqdm(test_loader, desc=f"Epoch {ep:02d} [Eval]", leave=False):
                 images = batch.image.to(device)
                 masks = batch.mask.to(device)
                 labels = batch.label

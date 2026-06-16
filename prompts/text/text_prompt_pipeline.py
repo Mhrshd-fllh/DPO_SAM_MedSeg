@@ -102,12 +102,17 @@ class TextPromptPipeline:
         # VQA
         vqa_answers = [""] * B
         vqa_raw_outputs = [None] * B
+        
         if self.cfg.vqa_enabled:
             pil_images = _to_pil_list(images)
             vqa_res = self.vqa.infer(images=pil_images, questions=questions)
             vqa_answers = [a.strip() for a in vqa_res.answers]
+            
             if vqa_res.raw_outputs is not None:
-                vqa_raw_outputs = vqa_res.raw_outputs
+                if len(vqa_res.raw_outputs) == B:
+                    vqa_raw_outputs = list(vqa_res.raw_outputs)
+                else:
+                    vqa_raw_outputs = [vqa_res.raw_outputs] * B
 
         # GPT: class-level descriptions are expected to be precomputed once.
         gpt_descs = [""] * B
@@ -123,9 +128,9 @@ class TextPromptPipeline:
         for a, d in zip(vqa_answers, gpt_descs):
             if a and d:
                 out_text.append(
-                                f"Shape and location: {a}. "
-                                f"Medical characteristics: {d}"
-                            )
+                    f"Shape and location: {a}. "
+                    f"Medical characteristics: {d}"
+                )
             elif a:
                 out_text.append(a)
             elif d:
@@ -136,7 +141,7 @@ class TextPromptPipeline:
         return TextPrompts(
             text=out_text,
             vqa_answers=vqa_answers,
-            vqa_raw_outputs=vqa_raw_outputs,
+            vqa_raw_outputs=vqa_raw_outputs, # خروجی تمیز و هماهنگ با بچ
             gpt_descriptions=gpt_descs,
             labels=label_list,
         )
