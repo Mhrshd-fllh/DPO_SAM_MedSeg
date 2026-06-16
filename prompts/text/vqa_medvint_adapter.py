@@ -1,40 +1,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Union
-
+from typing import List, Optional, Union, Any
 import torch
 from PIL import Image
-
 
 @dataclass
 class VQAResult:
     answers: List[str]
     scores: Optional[List[float]] = None
-
+    raw_outputs: Optional[Any] = None  
 
 class MedVInTAdapter:
     """
-    MedVInT (Medical Visual Instruction Tuned) VQA adapter.
-    
-    Loads a MedVInT model checkpoint and performs medical visual question answering.
-    Uses the official HuggingFace checkpoint: xmcmic/MedVInT-TE
-    
-    Args:
-        model_id: HuggingFace model ID or local checkpoint path
-                 Default: "xmcmic/MedVInT-TE" (official MedVInT checkpoint)
-        device: Device to load model on ("cuda" or "cpu")
-        torch_dtype: Precision for model (float32, float16, bfloat16)
-        max_new_tokens: Max tokens to generate in answer
+    True Image-to-Text Medical VQA Adapter using 'MILVLG/biomed-vlp-blip-large'.
+    Fuses visual pixels and clinical questions natively without any subfolder bugs.
     """
     def __init__(
         self,
-        model_id: str = "xmcmic/MedVInT-TE",
+        model_id: str = "edgeun/blip-medical-vqa-rad",
         device: Optional[str] = None,
         torch_dtype: Optional[torch.dtype] = None,
-        max_new_tokens: int = 100,
+        max_new_tokens: int = 50,
     ):
-        from transformers import AutoTokenizer, AutoModelForCausalLM
+        from transformers import BlipProcessor, BlipForQuestionAnswering
 
         if device is None:
             device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -42,85 +31,76 @@ class MedVInTAdapter:
         self.model_id = model_id
         self.device = device
         self.max_new_tokens = max_new_tokens
-
-        if torch_dtype is None:
-            torch_dtype = torch.float16 if device.startswith("cuda") else torch.float32
-        self.torch_dtype = torch_dtype
+        self.torch_dtype = torch_dtype if torch_dtype else (torch.float16 if "cuda" in device else torch.float32)
 
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_id,
-                torch_dtype=torch_dtype,
-                device_map=device,
-                trust_remote_code=True,
-            )
-            self.model.eval()
+            print(f"[📋 VQA VLM] Loading True Image-Text Model: {model_id}...")
+            self.processor = BlipProcessor.from_pretrained(model_id)
+            self.model = BlipForQuestionAnswering.from_pretrained(
+                model_id, 
+                torch_dtype=self.torch_dtype
+            ).to(device)
             
-            # Freeze all model parameters
+            self.model.eval()
             for param in self.model.parameters():
                 param.requires_grad = False
                 
+            print("🚀 [VQA Success] Medical Vision-Language Model is fully loaded!")
         except Exception as e:
-            raise RuntimeError(
-                f"Failed to load MedVInT model from '{model_id}'. "
-                f"Ensure the checkpoint exists and is compatible. Error: {e}"
-            )
+            raise RuntimeError(f"Failed to load Blip Medical VLM model. Error: {e}")
 
     def _process_image(self, img: Union[Image.Image, torch.Tensor]) -> Image.Image:
-        """Convert tensor to PIL Image if needed."""
+        """Ensure image is a valid PIL Image for the BlipProcessor."""
         if isinstance(img, torch.Tensor):
             x = img.detach().cpu()
-            if x.dim() != 3:
+            if x.dim() != 3: 
                 raise ValueError("Tensor image must be CHW")
-            if x.shape[0] == 1:
+            if x.shape[0] == 1: 
                 x = x.repeat(3, 1, 1)
-            if x.max() <= 1.0:
+            if x.max() <= 1.0: 
                 x = (x * 255.0).clamp(0, 255)
-            x = x.byte().permute(1, 2, 0).numpy()
-            img = Image.fromarray(x)
+            img = Image.fromarray(x.byte().permute(1, 2, 0).numpy())
+        elif isinstance(img, Image.Image):
+            img = img.convert("RGB")
         return img
 
     def infer(self, images: List[Union[Image.Image, torch.Tensor]], questions: List[str]) -> VQAResult:
         """
-        Generate VQA answers using MedVInT.
-        
-        Args:
-            images: List of PIL Images or torch tensors [C,H,W]
-            questions: List of question strings
-            
-        Returns:
-            VQAResult with answers and scores
+        Natively generates answers by looking at the ultrasound image and reading the question.
         """
         if len(images) != len(questions):
-            raise ValueError(f"images and questions must have same length. got {len(images)} vs {len(questions)}")
+            raise ValueError(f"Images and questions length mismatch: {len(images)} vs {len(questions)}")
 
         answers: List[str] = []
         scores: List[float] = []
+        all_raw_outputs = [] 
 
         with torch.no_grad():
             for img, question in zip(images, questions):
-                img = self._process_image(img)
+                pil_img = self._process_image(img)
                 
-                prompt = f"<image>\n{question}"
-                
-                inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+                inputs = self.processor(
+                    images=pil_img, 
+                    text=question, 
+                    return_tensors="pt"
+                ).to(self.device).to(self.torch_dtype)
                 
                 outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=self.max_new_tokens,
-                    do_sample=False,
-                    top_p=0.95,
-                    temperature=0.7,
-                    output_scores=True,
-                    return_dict_in_generate=True,
+                    **inputs, 
+                    max_new_tokens=self.max_new_tokens
                 )
                 
-                generated_ids = outputs.sequences[:, inputs.input_ids.shape[1]:]
-                answer = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0].strip()
+                all_raw_outputs.append(outputs) 
                 
-                score = 1.0 if answer else 0.0
+                answer = self.processor.decode(outputs[0], skip_special_tokens=True).strip()
+                
+                if not answer:
+                    answer = "inconclusive"
+                    score = 0.0
+                else:
+                    score = 1.0
+                    
                 answers.append(answer)
                 scores.append(score)
 
-        return VQAResult(answers=answers, scores=scores)
+        return VQAResult(answers=answers, scores=scores, raw_outputs=all_raw_outputs)
