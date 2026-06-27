@@ -8,7 +8,7 @@ prompts:
     saliency_threshold: 0.3
 
     crf:
-      enabled: false   
+      enabled: true   
       iters: 5
 
     cam:
