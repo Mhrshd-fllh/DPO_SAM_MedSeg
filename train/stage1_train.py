@@ -1,17 +1,20 @@
 from __future__ import annotations
 import os
 import argparse
+import random
+import numpy as np
 import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import StepLR
+from torch.utils.data import Subset, DataLoader
 from functools import partial
 
 from core.config import load_config
 from data.dataloader import build_busi_loaders
 from models.load_sam_med2d import load_sam_model
 from models.konwer_sam2d import KonwerSAM2D
-from models.konwer_sam2d_fuser import KonwerSAM2DFused           # Added imports
-from models.fusion_cam_encoder import CAMEncoderFusion         # Added imports
+from models.konwer_sam2d_fuser import KonwerSAM2DFused
+from models.fusion_cam_encoder import CAMEncoderFusion
 from losses.combo import DiceFocalCombo
 from eval.metrics import dice_coeff
 
@@ -25,7 +28,6 @@ from prompts.text.text_encoder import TextEncoderAdapter
 def freeze_image_encoder_if_needed(model: torch.nn.Module, freeze: bool):
     if not freeze:
         return
-    # Support both wrapped configurations
     target_model = model.sam if hasattr(model, "sam") else model
     for p in target_model.image_encoder.parameters():
         p.requires_grad = False
@@ -50,7 +52,7 @@ def build_cam_visual_pipeline(cfg, device: str) -> VisualPromptPipeline:
         crf_iters=int(cfg["prompts"]["visual"]["crf"]["iters"]),
         points_seed=int(cfg["prompts"]["visual"]["points_seed"]),
         saliency_threshold=float(cfg["prompts"]["visual"]["saliency_threshold"]),
-        return_artifacts=True,   # 🔥 Set to True so artifacts (saliency maps) are passed down the pipeline!
+        return_artifacts=True,
     )
     return vp
 
@@ -66,14 +68,38 @@ def main():
     cfg = load_config(args.config, args.prompts, args.datasets, args.train_cfg)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # 🛠️ ترفند غیرفعال‌سازی هوشمند لوپ‌های فرعی و نویزپراکن دیتابیس یا مدل‌ها
     import tqdm
     tqdm.tqdm = partial(tqdm.tqdm, disable=True)
-    
-    # فعال کردن لوپ اصلی و بومی برای محیط کار شما (سازگار با سرور و کولب)
     from tqdm.auto import tqdm as main_tqdm
 
     train_loader, test_loader = build_busi_loaders(cfg)
+
+    # Apply 10% Annotated Supervision Split for Semi-Supervised Stage 1 Training
+    semi_cfg = cfg["train"].get("semi_supervised", {})
+    if semi_cfg.get("enabled", False):
+        dataset_inst = train_loader.dataset
+        total_samples = len(dataset_inst)
+        indices = list(range(total_samples))
+        
+        # Ensure repeatable subset selection using the global configurations seed
+        seed = int(cfg["prompts"]["visual"]["points_seed"])
+        random.seed(seed)
+        np.random.seed(seed)
+        random.shuffle(indices)
+        
+        ratio = float(semi_cfg.get("annotated_ratio", 0.1))
+        split_idx = int(np.floor(ratio * total_samples))
+        annotated_indices = indices[:split_idx]
+        
+        annotated_subset = Subset(dataset_inst, annotated_indices)
+        train_loader = DataLoader(
+            annotated_subset,
+            batch_size=int(cfg["train"]["batch_size"]),
+            shuffle=True,
+            num_workers=int(cfg["train"]["num_workers"]),
+            collate_fn=train_loader.collate_fn
+        )
+        print(f"[Semi-Supervised Mode] Restricted Stage 1 to {ratio * 100}% annotated subset: {len(annotated_subset)} samples.")
 
     # Initialize text prompt pipeline
     text_cfg = TextPromptConfig(
@@ -97,7 +123,7 @@ def main():
     clip_model, _, tokenizer = load_biomedclip(device=device)
     text_encoder = TextEncoderAdapter(model=clip_model, tokenizer=tokenizer, device=device)
 
-    # SAM-Med2D / SAM
+    # Load SAM Model parameters
     sam = load_sam_model(
         checkpoint_path=cfg["sam"]["checkpoint"],
         model_type=cfg["sam"]["model_type"],
@@ -105,7 +131,7 @@ def main():
         strict=bool(cfg["sam"].get("strict", True)),
     )
 
-    # 🔥 DYNAMIC SWITCH: Choose model architecture variant based on train.yaml switches
+    # Choose model architecture variant based on train.yaml switches
     use_visual_fuser = cfg.get("fusion", {}).get("enabled", False)
     
     if use_visual_fuser:
@@ -130,7 +156,7 @@ def main():
 
     freeze_image_encoder_if_needed(model, bool(cfg["train"]["freeze_image_encoder"]))
 
-    prompt_source = cfg["train"]["prompt_source"]  # "cam" or "gt"
+    prompt_source = cfg["train"]["prompt_source"]
     if prompt_source not in ("cam", "gt"):
         raise ValueError("train.prompt_source must be 'cam' or 'gt'")
 
@@ -139,8 +165,8 @@ def main():
         cam_pipeline = build_cam_visual_pipeline(cfg, device=device)
 
     crit = DiceFocalCombo(
-        dice_w=float(cfg["train"]["loss"]["dice_w"]),
-        focal_w=float(cfg["train"]["loss"]["focal_w"]),
+        dice_w=float(cfg["train"]["loss"]["dice_weight"]),
+        focal_w=float(cfg["train"]["loss"]["focal_weight"]),
     )
 
     opt = AdamW(
@@ -162,7 +188,6 @@ def main():
         model.train()
         total_loss = 0.0
 
-        # ✅ استفاده از لوپ اصلی فیلتر شده بدون شکستگی لاگ
         for batch in main_tqdm(train_loader, desc=f"Epoch {ep:02d} [Train]", leave=False):
             images = batch.image.to(device)
             masks = batch.mask.to(device)
@@ -178,7 +203,6 @@ def main():
                 class_texts = [class_text] * images.shape[0]
                 vp = cam_pipeline(images, class_texts)
 
-            # Generate text prompts
             tp = text_pipeline(
                 images,
                 labels=labels,
@@ -187,7 +211,6 @@ def main():
 
             opt.zero_grad(set_to_none=True)
 
-            # 🔥 DYNAMIC FORWARD & LOSS COMPUTATION BLOCK
             if use_visual_fuser:
                 out = model(images, visual_prompts=vp)
                 loss = crit(out.combined_mask_logits, masks)
@@ -206,7 +229,6 @@ def main():
         model.eval()
         dices = []
         with torch.no_grad():
-            # ✅ استفاده از لوپ ارزیابی فیلتر شده بدون شکستگی لاگ
             for batch in main_tqdm(test_loader, desc=f"Epoch {ep:02d} [Eval]", leave=False):
                 images = batch.image.to(device)
                 masks = batch.mask.to(device)
